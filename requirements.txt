@@ -15,4 +15,8 @@ reportlab
 # mcp-sdk  # Uncomment and specify version if/when available via pip 
 streamlit-option-menu
 loguru
-sentence-transformers 
+sentence-transformers
+fastapi
+uvicorn
+slowapi
+python-multipart 

@@ -78,10 +78,11 @@ Campaign {campaign_id} Details:
 
 
 @tool
-def get_top_campaigns_by_metric(metric: str, limit: int = 5) -> str:
-    """Get top performing campaigns by a specific metric."""
+def get_top_campaigns_by_metric(metric: str = '', limit: int = 5) -> dict:
+    """Get top performing campaigns by a specific metric and return as a table."""
+    if not metric:
+        metric = 'opens'
     logger.info(f"Getting top {limit} campaigns by {metric}")
-    
     try:
         headers = {"Authorization": f"Bearer {API_KEY}"}
         response = requests.get(
@@ -90,17 +91,33 @@ def get_top_campaigns_by_metric(metric: str, limit: int = 5) -> str:
         )
         if response.status_code == 200:
             data = response.json()
-            result = f"Top {data['limit']} campaigns by {data['metric']}:\n\n"
-            for i, campaign in enumerate(data['campaigns'], 1):
-                result += f"{i}. Campaign {campaign['campaign_id']} ({campaign['campaign_topic']})\n"
-                result += f"   Segment: {campaign['customer_segment']}\n"
-                result += f"   Conversion Rate: {campaign['conversion_rate']}%\n\n"
-            return result.strip()
+            result = {
+                "type": "table",
+                "columns": ["campaign_id", "campaign_topic", "customer_segment", "conversion_rate"],
+                "rows": [
+                    {
+                        "campaign_id": c["campaign_id"],
+                        "campaign_topic": c["campaign_topic"],
+                        "customer_segment": c["customer_segment"],
+                        "conversion_rate": c["conversion_rate"],
+                    }
+                    for c in data["campaigns"]
+                ],
+                "message": f"Top {data['limit']} campaigns by {data['metric']}:"
+            }
+            logger.info(f"Returning table dict: {result}")
+            return result
         else:
-            return f"Error: {response.json()['detail']}"
+            return {
+                "type": "error",
+                "message": f"Error: {response.json()['detail']}"
+            }
     except Exception as e:
         logger.error(f"API error: {e}")
-        return f"Error retrieving top campaigns: {e}"
+        return {
+            "type": "error",
+            "message": f"Error retrieving top campaigns: {e}"
+        }
 
 
 @tool

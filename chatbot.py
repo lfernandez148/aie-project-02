@@ -57,11 +57,44 @@ memory = ConversationBufferMemory(
 
 logger.info("Memory system initialized with conversation buffer")
 
+SAMPLE_QUESTIONS = [
+    "Show me the top 5 campaigns by conversion rate",
+    "What is the average open rate for all campaigns?",
+    "Compare campaign 101 and campaign 102",
+    "Show me a bar chart of audience volume by topic",
+    "List all campaigns for the Retail segment",
+    "Get summary statistics for all campaigns",
+    "Show me the top campaigns by clicks",
+    "What are the trends in conversion rate over time?",
+    "Show me a table of top campaigns by open rate",
+    "Show me the top 10 campaigns"
+]
+
+HELP_TRIGGERS = [
+    "what can i ask",
+    "what kind of question",
+    "help",
+    "examples",
+    "sample questions",
+    "how to use",
+    "what do you do",
+    "what can you do",
+    "how can you help"
+]
+
 
 def chat_query_with_direct_tools(user_query: str, session_id: str = "default") -> str:
     """Use direct function calling with memory."""
     logger.info(f"Processing query with memory: {user_query}")
     
+    # Check for help/example triggers
+    if any(trigger in user_query.lower() for trigger in HELP_TRIGGERS):
+        return {
+            "type": "examples",
+            "message": "Here are some sample questions you can ask:",
+            "examples": SAMPLE_QUESTIONS
+        }
+
     try:
         # Get conversation history from memory
         chat_history = memory.chat_memory.messages
@@ -118,6 +151,7 @@ def chat_query_with_direct_tools(user_query: str, session_id: str = "default") -
                     if available_tool.name == tool_name:
                         logger.info(f"Found matching tool: {available_tool.name}")
                         result = available_tool.invoke(tool_args)
+                        logger.info(f"Tool result: {result}")
                         tool_results.append({
                             "tool_name": tool_name,
                             "result": result
@@ -140,6 +174,13 @@ def chat_query_with_direct_tools(user_query: str, session_id: str = "default") -
                     memory.chat_memory.add_user_message(user_query)
                     memory.chat_memory.add_ai_message(result['result'].get('message', ''))
                     logger.info("Returning chart tool result directly to UI.")
+                    return result['result']
+            # PATCH: If any tool result is a table dict, return it immediately
+            for result in tool_results:
+                if isinstance(result['result'], dict) and result['result'].get('type') == 'table':
+                    memory.chat_memory.add_user_message(user_query)
+                    memory.chat_memory.add_ai_message(result['result'].get('message', ''))
+                    logger.info("Returning table tool result directly to UI.")
                     return result['result']
             
             # Check if any tool returned meaningful data
@@ -178,8 +219,8 @@ Please synthesize this information into a clear, helpful response that takes int
             else:
                 # No meaningful data found
                 final_answer = (
-                    "I'm only able to answer questions about campaign data. "
-                    "Please ask something related to your campaigns."
+                    "I couldn't find relevant campaign information for your question. "
+                    "Please try rephrasing or ask about a specific campaign, metric, topic or segment!"
                 )
             
         else:
@@ -192,8 +233,8 @@ Please synthesize this information into a clear, helpful response that takes int
             else:
                 # No relevant data found
                 final_answer = (
-                    "I'm only able to answer questions about campaign data. "
-                    "Please ask something related to your campaigns."
+                    "I couldn't find relevant campaign information for your question. "
+                    "Please try rephrasing or ask about a specific campaign, metric, topic or segment!"
                 )
         
         # Save conversation to memory
@@ -220,8 +261,8 @@ def chat_query_fallback_with_memory(user_query: str) -> str:
     context = retrieve_campaign_context(user_query)
     if not context:
         return (
-            "I'm only able to answer questions about campaign data. "
-            "Please ask something related to your campaigns."
+            "I couldn't find relevant campaign information for your question. "
+            "Please try rephrasing or ask about a specific campaign, metric, topic or segment!"
         )
     
     # Create prompt with memory

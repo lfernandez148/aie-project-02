@@ -3,6 +3,7 @@
 import streamlit as st
 from chatbot import chat_query, clear_memory
 from chart_utils import display_chart
+import pandas as pd
 
 
 def app():
@@ -16,13 +17,18 @@ def app():
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    # Display chat history (show text and charts)
+    # Display chat history (show text, charts, tables, and examples)
     for message in st.session_state.messages:
         avatar = "👤" if message["role"] == "user" else "✨"
         with st.chat_message(message["role"], avatar=avatar):
             st.markdown(message["content"])
             if message.get("chart_type"):
                 display_chart(message["chart_type"])
+            if message.get("table_data"):
+                table = message["table_data"]
+                st.dataframe(pd.DataFrame(table["rows"], columns=table["columns"]))
+            if message.get("examples"):
+                st.markdown("\n".join([f"- {q}" for q in message["examples"]]))
 
     # Chat input
     prompt = st.chat_input("Ask about your campaign data...")
@@ -46,6 +52,25 @@ def app():
                     "role": "assistant",
                     "content": response.get("message", ""),
                     "chart_type": response.get("chart_type", None)
+                })
+            elif isinstance(response, dict) and response.get("type") == "table":
+                st.markdown(response.get("message", ""))
+                st.dataframe(pd.DataFrame(response["rows"], columns=response["columns"]))
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": response.get("message", ""),
+                    "table_data": {
+                        "columns": response["columns"],
+                        "rows": response["rows"]
+                    }
+                })
+            elif isinstance(response, dict) and response.get("type") == "examples":
+                st.markdown(response.get("message", ""))
+                st.markdown("\n".join([f"- {q}" for q in response.get("examples", [])]))
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": response.get("message", ""),
+                    "examples": response.get("examples", [])
                 })
             elif isinstance(response, dict) and response.get("type") == "error":
                 st.error(response.get("message", "Unknown error."))

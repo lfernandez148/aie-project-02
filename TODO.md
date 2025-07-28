@@ -3,12 +3,11 @@
 ## 🚀 High Priority
 
 - [ ] UI - Response as HMTL/Markdown
-- [ ] Memory
+- [X] Memory
 - [X] Tool matching
 - [X] Function Calling / Tools
 - [X] Chat history
 - [X] Query database (SQL)
-- [ ] Structural retriever (what is it?)
 - [X] API endpoints for external integrations
 - [X] API key validation
 - [X] API limit rate
@@ -26,6 +25,7 @@
 - [ ] Session management
 - [ ] Unit tests
 - [ ] Integration tests
+- [ ] Structural retriever (what is it?)
 
 ## 💡 Ideas & Research
 
@@ -64,32 +64,30 @@
 - [X] Debug and cleanup tools
 - [X] ChromaDB integration
 
-
-
 -- AI Engineering - Project 2
 
 ## Task Requirements
 
 **Core Requirements:**
 
-1. **RAG Implementation:**
+1. **x RAG Implementation:**
    * x Create a knowledge base relevant to your domain
    * x Implement standard document retrieval with embeddings
    * x Use chunking strategies and similarity search
 2. **Function Calling:**
    * Implement at least 3 different function calls
    * x Functions should be relevant to your domain
-   * Examples: x data analysis, calculations, x API integrations
-3. **Domain Specialization:**
+   * Examples: x data analysis, calculations, x API integrations, chart?
+3. **x Domain Specialization:**
    * x Choose a specific domain or use case
    * x Create a focused knowledge base
    * x Implement domain-specific prompts and responses
-   * Add relevant security measures for your domain
-4. **Technical Implementation:**
+   * x Add relevant security measures for your domain
+4. **x Technical Implementation:**
    * x Use LangChain for OpenAI API integration
    * x Implement proper error handling
    * x Add logging and monitoring
-   * Include user input validation
+   * x Include user input validation
    * x Implement rate limiting and API key management
 5. **User Interface:**
    * x Create an intuitive interface using Streamlit or Next.js

@@ -2,6 +2,7 @@
 
 import streamlit as st
 from chatbot import chat_query, clear_memory
+from chart_utils import display_chart
 
 
 def app():
@@ -15,11 +16,13 @@ def app():
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    # Display chat history
+    # Display chat history (show text and charts)
     for message in st.session_state.messages:
         avatar = "👤" if message["role"] == "user" else "✨"
         with st.chat_message(message["role"], avatar=avatar):
             st.markdown(message["content"])
+            if message.get("chart_type"):
+                display_chart(message["chart_type"])
 
     # Chat input
     prompt = st.chat_input("Ask about your campaign data...")
@@ -36,13 +39,26 @@ def app():
         with st.chat_message("assistant", avatar="✨"):
             with st.spinner("Thinking..."):
                 response = chat_query(prompt)
-            st.markdown(response)
-        
-        # Add assistant response to chat history
-        st.session_state.messages.append({
-            "role": "assistant", 
-            "content": response
-        })
+            if isinstance(response, dict) and response.get("type") == "chart":
+                st.markdown(response.get("message", ""))
+                display_chart(response.get("chart_type"))
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": response.get("message", ""),
+                    "chart_type": response.get("chart_type", None)
+                })
+            elif isinstance(response, dict) and response.get("type") == "error":
+                st.error(response.get("message", "Unknown error."))
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": response.get("message", "Unknown error.")
+                })
+            else:
+                st.markdown(response)
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": response
+                })
 
     # Add memory management buttons
     if st.session_state.messages:

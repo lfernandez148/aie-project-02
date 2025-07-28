@@ -492,6 +492,50 @@ async def compare_campaigns(
     finally:
         conn.close()
 
+@app.get("/campaigns/all", tags=["campaigns"])
+@limiter.limit("50/minute")
+async def get_all_campaigns(
+    request: Request,
+    api_key_info: APIKeyInfo = Depends(verify_api_key)
+):
+    """
+    Get all campaigns for data analysis and visualization.
+    
+    Returns all campaigns with their complete data for charting purposes.
+    """
+    logger.info(f"API: Getting all campaigns (API Key: {api_key_info['name']})")
+    
+    conn = get_database_connection()
+    try:
+        query = """
+            SELECT * FROM campaigns 
+            ORDER BY campaign_date DESC
+        """
+        results = conn.execute(query).fetchall()
+        
+        # Get column names
+        columns = [description[0] for description in conn.execute(query).description]
+        
+        campaigns = []
+        for row in results:
+            campaign_data = dict(zip(columns, row))
+            campaigns.append(campaign_data)
+        
+        return {
+            "count": len(campaigns),
+            "campaigns": campaigns
+        }
+            
+    except Exception as e:
+        logger.error(f"Database error: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error retrieving all campaigns: {str(e)}"
+        )
+    finally:
+        conn.close()
+
+
 @app.get("/campaigns/{campaign_id}", response_model=CampaignResponse, tags=["campaigns"])
 @limiter.limit("100/minute")
 async def get_campaign_by_id(

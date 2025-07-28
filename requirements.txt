@@ -19,4 +19,5 @@ sentence-transformers
 fastapi
 uvicorn
 slowapi
-python-multipart 
+python-multipart
+plotly 

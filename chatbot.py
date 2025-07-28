@@ -82,8 +82,11 @@ def chat_query_with_direct_tools(user_query: str, session_id: str = "default") -
         # Add system message with context about being a campaign assistant
         system_message = HumanMessage(content=(
             "You are a Campaign Performance Assistant. "
-            "You help users analyze campaign data and answer questions about their marketing campaigns. "
+            "You ONLY answer questions about campaign data and marketing campaigns. "
             "Use the available tools to get accurate information and provide helpful insights. "
+            "If no relevant campaign data is found, respond with: "
+            "'I'm only able to answer questions about campaign data. "
+            "Please ask something related to your campaigns.' "
             "Always be conversational and remember previous context from the conversation."
         ))
         messages.append(system_message)
@@ -130,29 +133,68 @@ def chat_query_with_direct_tools(user_query: str, session_id: str = "default") -
                         "result": result
                     })
             
-            # Create a follow-up message with tool results
-            tool_results_text = "\n\n".join([
-                f"Tool {result['tool_name']} result:\n{result['result']}"
-                for result in tool_results
-            ])
+            # PATCH: If any tool result is a chart dict, return it immediately
+            for result in tool_results:
+                if isinstance(result['result'], dict) and result['result'].get('type') == 'chart':
+                    # Save conversation to memory
+                    memory.chat_memory.add_user_message(user_query)
+                    memory.chat_memory.add_ai_message(result['result'].get('message', ''))
+                    logger.info("Returning chart tool result directly to UI.")
+                    return result['result']
             
-            follow_up_prompt = f"""
+            # Check if any tool returned meaningful data
+            meaningful_data = False
+            for result in tool_results:
+                if result['tool_name'] == 'search_campaign_documents':
+                    # For RAG tool, check if it found documents
+                    if "No relevant campaign documents found" not in result['result']:
+                        meaningful_data = True
+                        break
+                else:
+                    # For database tools, check if they returned data
+                    if isinstance(result['result'], str) and "not found" not in result['result'].lower() and "error" not in result['result'].lower():
+                        meaningful_data = True
+                        break
+            
+            if meaningful_data:
+                # Create a follow-up message with tool results
+                tool_results_text = "\n\n".join([
+                    f"Tool {result['tool_name']} result:\n{result['result']}"
+                    for result in tool_results
+                ])
+                
+                follow_up_prompt = f"""
 Based on the tool results below and our conversation history, please provide a comprehensive answer to the user's question: "{user_query}"
 
 Tool Results:
 {tool_results_text}
 
 Please synthesize this information into a clear, helpful response that takes into account our previous conversation.
-            """.strip()
-            
-            # Get final response
-            final_response = llm.invoke(follow_up_prompt)
-            final_answer = final_response.content
+                """.strip()
+                
+                # Get final response
+                final_response = llm.invoke(follow_up_prompt)
+                final_answer = final_response.content
+            else:
+                # No meaningful data found
+                final_answer = (
+                    "I'm only able to answer questions about campaign data. "
+                    "Please ask something related to your campaigns."
+                )
             
         else:
-            # No tool calls needed, return direct response
-            logger.info("No tool calls needed, returning direct response")
-            final_answer = response.content
+            # No tool calls needed, check if we should use RAG fallback
+            logger.info("No tool calls requested, checking RAG fallback")
+            context = retrieve_campaign_context(user_query)
+            if context:
+                # Use RAG fallback since we found relevant documents
+                final_answer = call_llm_with_memory(user_query, context, "")
+            else:
+                # No relevant data found
+                final_answer = (
+                    "I'm only able to answer questions about campaign data. "
+                    "Please ask something related to your campaigns."
+                )
         
         # Save conversation to memory
         memory.chat_memory.add_user_message(user_query)
@@ -220,17 +262,27 @@ def call_llm_with_memory(user_query: str, context: str, history_text: str) -> st
 
 
 def retrieve_campaign_context(user_query: str):
-    """Original RAG context retrieval."""
+    """Original RAG context retrieval with similarity threshold."""
     logger.info(f"Processing query: {user_query}")
-    docs = retriever.invoke(user_query)
-    if not docs:
+    
+    # Use similarity search with scores to filter relevant documents
+    docs_and_scores = db.similarity_search_with_score(user_query, k=4)
+    
+    # Filter documents with similarity score above threshold (0.5 is a good threshold)
+    relevant_docs = []
+    for doc, score in docs_and_scores:
+        logger.info(f"Document similarity score: {score:.4f}")
+        if score < 0.5:  # Lower score = more similar (cosine distance)
+            relevant_docs.append(doc)
+    
+    if not relevant_docs:
         logger.warning(f"No relevant documents found for query: {user_query}")
         return None
     
-    logger.info(f"Retrieved {len(docs)} relevant documents")
+    logger.info(f"Retrieved {len(relevant_docs)} relevant documents")
     
     # Log details about each retrieved document
-    for i, doc in enumerate(docs):
+    for i, doc in enumerate(relevant_docs):
         logger.info(f"Document {i+1}:")
         logger.info(f"  Content preview: {doc.page_content[:200]}...")
         if hasattr(doc, 'metadata') and doc.metadata:
@@ -238,7 +290,7 @@ def retrieve_campaign_context(user_query: str):
         else:
             logger.info("  Metadata: None")
     
-    context = "\n".join([doc.page_content for doc in docs])
+    context = "\n".join([doc.page_content for doc in relevant_docs])
     logger.debug(f"Context length: {len(context)} characters")
     logger.info(f"Full context preview: {context[:500]}...")
     return context

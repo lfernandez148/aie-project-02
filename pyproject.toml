@@ -16,6 +16,7 @@ dependencies = [
     "loki-logger-handler>=1.1.2",
     "numpy>=2.3.1",
     "pandas>=2.3.1",
+    "plotly>=6.2.0",
     "pypdf>=5.8.0",
     "python-docx>=1.2.0",
     "reportlab>=4.4.3",

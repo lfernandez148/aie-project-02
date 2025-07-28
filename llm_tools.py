@@ -6,6 +6,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 import requests
 import json
+from chart_utils import display_chart, get_available_charts
 
 # Load the persisted Chroma DB and retriever for RAG
 embeddings = HuggingFaceEmbeddings(
@@ -26,11 +27,22 @@ def search_campaign_documents(query: str) -> str:
     """Search through campaign documents and reports using RAG."""
     logger.info(f"Searching documents for: {query}")
     
-    docs = retriever.invoke(query)
-    if not docs:
+    # Use similarity search with scores to filter relevant documents
+    docs_and_scores = db.similarity_search_with_score(query, k=4)
+    
+    # Filter documents with similarity score above threshold (0.5 is a good threshold)
+    relevant_docs = []
+    for doc, score in docs_and_scores:
+        logger.info(f"Document similarity score: {score:.4f}")
+        if score < 0.5:  # Lower score = more similar (cosine distance)
+            relevant_docs.append(doc)
+    
+    if not relevant_docs:
+        logger.info("No documents met similarity threshold")
         return "No relevant campaign documents found."
     
-    context = "\n".join([doc.page_content for doc in docs])
+    logger.info(f"Found {len(relevant_docs)} relevant documents")
+    context = "\n".join([doc.page_content for doc in relevant_docs])
     return f"Found relevant campaign information:\n\n{context}"
 
 
@@ -205,6 +217,32 @@ Campaign {c2['campaign_id']} ({c2['campaign_topic']}):
         return f"Error comparing campaigns: {e}"
 
 
+@tool
+def create_campaign_chart(chart_type: str) -> dict:
+    """Create and display a chart for campaign data visualization.
+    
+    Available chart types:
+    - audience_by_topic: Bar chart showing audience volume by campaign topic
+    - conversion_rate: Bar chart showing top campaigns by conversion rate
+    - segment_performance: Bar chart showing performance by customer segment
+    - trends: Line chart showing performance trends over time
+    """
+    logger.info(f"Creating chart: {chart_type}")
+    
+    available_charts = get_available_charts()
+    if chart_type not in available_charts:
+        return {
+            "type": "error",
+            "message": f"Invalid chart type. Available types: {', '.join(available_charts)}"
+        }
+    # Do NOT call display_chart here. Just return the chart type and message.
+    return {
+        "type": "chart",
+        "chart_type": chart_type,
+        "message": f"📊 {chart_type.replace('_', ' ').title()}"
+    }
+
+
 # List of all available tools for the LLM
 LLM_TOOLS = [
     search_campaign_documents,
@@ -213,5 +251,6 @@ LLM_TOOLS = [
     get_campaigns_by_topic,
     get_campaigns_by_segment,
     get_campaign_summary_stats,
-    compare_campaigns_by_id
+    compare_campaigns_by_id,
+    create_campaign_chart
 ] 

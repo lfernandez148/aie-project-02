@@ -14,8 +14,8 @@ from database_setup import get_database_connection
 
 load_dotenv()
 
-CHROMA_DIR = "chroma_db"
-LOGS_FOLDER = "logs"
+CHROMA_DIR = "../chroma_db"
+LOGS_FOLDER = "../logs"
 
 # Configuration: Choose between OpenAI and LM Studio
 USE_LOCAL_LLM = os.getenv("USE_LOCAL_LLM", "false").lower() == "true"

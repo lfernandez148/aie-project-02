@@ -1,7 +1,7 @@
 # Campaign Performance Assistant - Chat Interface
 
 import streamlit as st
-from chatbot import chat_query
+from chatbot import chat_query, clear_memory
 
 
 def app():
@@ -9,7 +9,7 @@ def app():
     st.write(
         "Ask me anything about your campaign data! "
         "(I can only answer questions about your campaigns.)"
-    )
+        )
 
     # Initialize chat history in session state
     if "messages" not in st.session_state:
@@ -44,10 +44,18 @@ def app():
             "content": response
         })
 
-    # Add a clear chat button (always visible when there are messages)
+    # Add memory management buttons
     if st.session_state.messages:
-        col1, col2, col3 = st.columns([1, 1, 1])
-        with col2:
+        col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+        
+        with col1:
             if st.button("Clear Chat History", type="secondary"):
                 st.session_state.messages = []
                 st.rerun()
+        
+        with col2:
+            if st.button("Clear Memory", type="secondary"):
+                clear_memory()
+                st.success("Memory cleared! The assistant will start fresh.")
+        
+

@@ -56,8 +56,27 @@ limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
     title="Campaign Performance API",
-    description="REST API for campaign performance data and analytics (with authentication)",
-    version="2.0.0"
+    description="Campaign Performance API v2.0 - Secure REST API for campaign data with authentication and rate limiting. Test API Key: sk-test-1234567890abcdef",
+    version="2.0.0",
+    contact={
+        "name": "Campaign Performance API Support",
+        "email": "support@campaign-api.com",
+    },
+    license_info={
+        "name": "MIT",
+        "url": "https://opensource.org/licenses/MIT",
+    },
+    servers=[
+        {"url": "http://localhost:8000", "description": "Development server"},
+        {"url": "https://api.campaign-performance.com", "description": "Production server"},
+    ],
+    tags=[
+        {"name": "health", "description": "Health check and monitoring endpoints"},
+        {"name": "authentication", "description": "Authentication and verification endpoints"},
+        {"name": "campaigns", "description": "Campaign data and analytics endpoints"},
+        {"name": "analytics", "description": "Summary statistics and top performers"},
+        {"name": "comparison", "description": "Campaign comparison endpoints"},
+    ]
 )
 
 # Add rate limiter to app
@@ -138,45 +157,54 @@ def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)
 @app.get("/")
 @limiter.limit("30/minute")
 async def root(request: Request):
-    """Root endpoint with API information."""
+    """Root endpoint - simple health check."""
     return {
-        "message": "Campaign Performance API (v2.0.0)",
-        "version": "2.0.0",
-        "authentication": "Bearer token required",
-        "endpoints": [
-            "/campaigns/summary",
-            "/campaigns/top/{metric}",
-            "/campaigns/topic/{topic}",
-            "/campaigns/segment/{segment}",
-            "/campaigns/compare/{campaign_id1}/{campaign_id2}",
-            "/campaigns/{campaign_id}"
-        ],
-        "rate_limits": {
-            "root": "30/minute",
-            "summary": "60/minute", 
-            "campaign_details": "100/minute",
-            "top_campaigns": "50/minute",
-            "topic_search": "40/minute",
-            "segment_search": "40/minute",
-            "comparison": "30/minute"
-        }
+        "status": "healthy",
+        "message": "Campaign Performance API is running",
+        "version": "2.0.0"
     }
 
-@app.get("/auth/verify")
+
+@app.get("/health", tags=["health"])
+async def health_check():
+    """
+    Simple health check endpoint.
+    
+    Returns basic API status. No authentication required.
+    """
+    import time
+    
+    return {
+        "status": "healthy",
+        "message": "API is running",
+        "timestamp": time.time(),
+        "version": "2.0.0"
+    }
+
+@app.get("/auth/verify", tags=["authentication"])
 async def verify_auth(api_key_info: APIKeyInfo = Depends(verify_api_key)):
-    """Verify authentication and return API key info."""
+    """
+    Verify authentication and return API key info.
+    
+    Use this endpoint to test if your API key is valid and get information about your rate limits.
+    """
     return {
         "authenticated": True,
         "api_key_info": api_key_info
     }
 
-@app.get("/campaigns/summary", response_model=SummaryStatsResponse)
+@app.get("/campaigns/summary", response_model=SummaryStatsResponse, tags=["analytics"])
 @limiter.limit("60/minute")
 async def get_campaign_summary_stats(
     request: Request,
     api_key_info: APIKeyInfo = Depends(verify_api_key)
 ):
-    """Get summary statistics for all campaigns."""
+    """
+    Get summary statistics for all campaigns.
+    
+    Returns aggregated metrics including total campaigns, average conversion rates,
+    and total engagement metrics across all campaigns.
+    """
     logger.info(f"API: Getting campaign summary statistics (API Key: {api_key_info['name']})")
     
     conn = get_database_connection()
@@ -223,7 +251,7 @@ async def get_campaign_summary_stats(
     finally:
         conn.close()
 
-@app.get("/campaigns/top/{metric}", response_model=TopCampaignsResponse)
+@app.get("/campaigns/top/{metric}", response_model=TopCampaignsResponse, tags=["analytics"])
 @limiter.limit("50/minute")
 async def get_top_campaigns_by_metric(
     request: Request,
@@ -231,7 +259,11 @@ async def get_top_campaigns_by_metric(
     limit: int = 5,
     api_key_info: APIKeyInfo = Depends(verify_api_key)
 ):
-    """Get top performing campaigns by a specific metric."""
+    """
+    Get top performing campaigns by a specific metric.
+    
+    Valid metrics: conversion_rate, open_rate, click_rate, opens, clicks, conversions
+    """
     logger.info(f"API: Getting top {limit} campaigns by {metric} (API Key: {api_key_info['name']})")
     
     valid_metrics = [
@@ -282,14 +314,18 @@ async def get_top_campaigns_by_metric(
     finally:
         conn.close()
 
-@app.get("/campaigns/topic/{topic}")
+@app.get("/campaigns/topic/{topic}", tags=["campaigns"])
 @limiter.limit("40/minute")
 async def get_campaigns_by_topic(
     request: Request,
     topic: str,
     api_key_info: APIKeyInfo = Depends(verify_api_key)
 ):
-    """Get all campaigns for a specific topic."""
+    """
+    Get all campaigns for a specific topic.
+    
+    Searches for campaigns containing the specified topic in their campaign_topic field.
+    """
     logger.info(f"API: Getting campaigns for topic: {topic} (API Key: {api_key_info['name']})")
     
     conn = get_database_connection()
@@ -330,14 +366,18 @@ async def get_campaigns_by_topic(
     finally:
         conn.close()
 
-@app.get("/campaigns/segment/{segment}")
+@app.get("/campaigns/segment/{segment}", tags=["campaigns"])
 @limiter.limit("40/minute")
 async def get_campaigns_by_segment(
     request: Request,
     segment: str,
     api_key_info: APIKeyInfo = Depends(verify_api_key)
 ):
-    """Get all campaigns for a specific customer segment."""
+    """
+    Get all campaigns for a specific customer segment.
+    
+    Searches for campaigns targeting the specified customer segment.
+    """
     logger.info(f"API: Getting campaigns for segment: {segment} (API Key: {api_key_info['name']})")
     
     conn = get_database_connection()
@@ -378,7 +418,7 @@ async def get_campaigns_by_segment(
     finally:
         conn.close()
 
-@app.get("/campaigns/compare/{campaign_id1}/{campaign_id2}")
+@app.get("/campaigns/compare/{campaign_id1}/{campaign_id2}", tags=["comparison"])
 @limiter.limit("30/minute")
 async def compare_campaigns(
     request: Request,
@@ -386,7 +426,11 @@ async def compare_campaigns(
     campaign_id2: int,
     api_key_info: APIKeyInfo = Depends(verify_api_key)
 ):
-    """Compare two campaigns side by side."""
+    """
+    Compare two campaigns side by side.
+    
+    Returns a detailed comparison of two campaigns by their IDs.
+    """
     logger.info(f"API: Comparing campaigns {campaign_id1} and {campaign_id2} (API Key: {api_key_info['name']})")
     
     conn = get_database_connection()
@@ -448,14 +492,18 @@ async def compare_campaigns(
     finally:
         conn.close()
 
-@app.get("/campaigns/{campaign_id}", response_model=CampaignResponse)
+@app.get("/campaigns/{campaign_id}", response_model=CampaignResponse, tags=["campaigns"])
 @limiter.limit("100/minute")
 async def get_campaign_by_id(
     request: Request,
     campaign_id: int,
     api_key_info: APIKeyInfo = Depends(verify_api_key)
 ):
-    """Get detailed information about a specific campaign by ID."""
+    """
+    Get detailed information about a specific campaign by ID.
+    
+    Returns all available fields for the specified campaign.
+    """
     logger.info(f"API: Getting campaign details for ID: {campaign_id} (API Key: {api_key_info['name']})")
     
     conn = get_database_connection()

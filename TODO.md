@@ -9,9 +9,9 @@
 - [X] Chat history
 - [X] Query database (SQL)
 - [ ] Structural retriever (what is it?)
-- [ ] API endpoints for external integrations
-- [ ] API key validation
-- [ ] API limit rate
+- [X] API endpoints for external integrations
+- [X] API key validation
+- [X] API limit rate
 - [ ] Add LangSmith
 
 ## 🔧 Medium Priority
@@ -79,7 +79,7 @@
 2. **Function Calling:**
    * Implement at least 3 different function calls
    * x Functions should be relevant to your domain
-   * Examples: x data analysis, x calculations, API integrations
+   * Examples: x data analysis, calculations, x API integrations
 3. **Domain Specialization:**
    * x Choose a specific domain or use case
    * x Create a focused knowledge base
@@ -90,7 +90,7 @@
    * x Implement proper error handling
    * x Add logging and monitoring
    * Include user input validation
-   * Implement rate limiting and API key management
+   * x Implement rate limiting and API key management
 5. **User Interface:**
    * x Create an intuitive interface using Streamlit or Next.js
    * Show relevant context and sources

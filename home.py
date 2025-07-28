@@ -5,13 +5,28 @@ from chatbot import chat_query, clear_memory
 from chart_utils import display_chart
 import pandas as pd
 
+# Sample questions and help message (should match chatbot.py)
+SAMPLE_QUESTIONS = [
+    "Any recommendations for campaign 100",
+    "Compare campaign 101 and campaign 102",
+    "What is the average open rate for all campaigns?",
+    "Show me a bar chart of audience volume by topic",
+    "Get summary statistics for all campaigns",
+    "What are the trends in conversion rate over time?",
+    "Show me a table of top 10 campaigns by conversion rate",
+]
+HELP_MESSAGE = "Here are some sample questions you can ask:"
+
 
 def app():
     st.title("Campaign Performance Assistant")
     st.write(
         "Ask me anything about your campaign data! "
-        "(I can only answer questions about your campaigns.)"
-        )
+    )
+
+    # Show sample questions as a static list below the intro
+    st.markdown(f"**{HELP_MESSAGE}**")
+    st.markdown("\n".join([f"- {q}" for q in SAMPLE_QUESTIONS]))
 
     # Initialize chat history in session state
     if "messages" not in st.session_state:

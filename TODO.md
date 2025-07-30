@@ -2,7 +2,7 @@
 
 ## 🚀 High Priority
 
-- [ ] UI - Response as HMTL/Markdown
+- [X] UI - Response as HMTL/Markdown
 - [X] Memory
 - [X] Tool matching
 - [X] Function Calling / Tools
@@ -20,17 +20,17 @@
 
 ## 📝 Low Priority
 
-- [ ] Charts
+- [X] Charts
 - [ ] User authentication
 - [ ] Session management
 - [ ] Unit tests
 - [ ] Integration tests
-- [ ] Structural retriever (what is it?)
+- [X] Structural retriever (Pydantic?)
 
 ## 💡 Ideas & Research
 
 - [ ] Look into caching strategies for faster responses
-- [ ] Consider using FastAPI for API endpoints
+- [X] Consider using FastAPI for API endpoints
 - [ ] Research vector database alternatives (Pinecone, Weaviate)
 - [ ] Explort different splitting/chuncking options
 
@@ -50,6 +50,9 @@
 
 ### Known Issues
 
+- Fix: VectorDB getting Campaing Executive
+  - Summary and passing to LLM, score < 0.5 (for some reason not getting documents)
+  - We may need to tune chunks
 - Large PDF files may take time to process
 - Need to handle concurrent file uploads better
 
@@ -74,10 +77,10 @@
    * x Create a knowledge base relevant to your domain
    * x Implement standard document retrieval with embeddings
    * x Use chunking strategies and similarity search
-2. **Function Calling:**
-   * Implement at least 3 different function calls
+2. **x Function Calling:**
+   * x Implement at least 3 different function calls
    * x Functions should be relevant to your domain
-   * Examples: x data analysis, calculations, x API integrations, chart?
+   * x Examples: x data analysis, calculations, x API integrations, x chart
 3. **x Domain Specialization:**
    * x Choose a specific domain or use case
    * x Create a focused knowledge base

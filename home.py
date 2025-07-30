@@ -7,14 +7,16 @@ import pandas as pd
 
 # Sample questions and help message (should match chatbot.py)
 SAMPLE_QUESTIONS = [
-    "Any recommendations for campaign 100",
+    "Any recommendations for campaign 101",
     "Compare campaign 101 and campaign 102",
     "What is the average open rate for all campaigns?",
     "Show me a bar chart of audience volume by topic",
     "Get summary statistics for all campaigns",
     "What are the trends in conversion rate over time?",
-    "Show me a table of top 10 campaigns by conversion rate",
+    "Top 10 performing campaings",
+    "Executive summary for campaign 101",
 ]
+
 HELP_MESSAGE = "Here are some sample questions you can ask:"
 
 
@@ -41,9 +43,14 @@ def app():
                 display_chart(message["chart_type"])
             if message.get("table_data"):
                 table = message["table_data"]
-                st.dataframe(pd.DataFrame(table["rows"], columns=table["columns"]))
+                st.dataframe(
+                    pd.DataFrame(table["rows"], columns=table["columns"])
+                )
             if message.get("examples"):
                 st.markdown("\n".join([f"- {q}" for q in message["examples"]]))
+            # Display source information if available
+            if message.get("source"):
+                st.caption(f"📚 Source: {message['source']}")
 
     # Chat input
     prompt = st.chat_input("Ask about your campaign data...")
@@ -63,25 +70,35 @@ def app():
             if isinstance(response, dict) and response.get("type") == "chart":
                 st.markdown(response.get("message", ""))
                 display_chart(response.get("chart_type"))
+                if response.get("source"):
+                    st.caption(f"📚 Source: {response['source']}")
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": response.get("message", ""),
-                    "chart_type": response.get("chart_type", None)
+                    "chart_type": response.get("chart_type", None),
+                    "source": response.get("source", "")
                 })
             elif isinstance(response, dict) and response.get("type") == "table":
                 st.markdown(response.get("message", ""))
-                st.dataframe(pd.DataFrame(response["rows"], columns=response["columns"]))
+                st.dataframe(
+                    pd.DataFrame(response["rows"], columns=response["columns"])
+                )
+                if response.get("source"):
+                    st.caption(f"📚 Source: {response['source']}")
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": response.get("message", ""),
                     "table_data": {
                         "columns": response["columns"],
                         "rows": response["rows"]
-                    }
+                    },
+                    "source": response.get("source", "")
                 })
             elif isinstance(response, dict) and response.get("type") == "examples":
                 st.markdown(response.get("message", ""))
-                st.markdown("\n".join([f"- {q}" for q in response.get("examples", [])]))
+                st.markdown(
+                    "\n".join([f"- {q}" for q in response.get("examples", [])])
+                )
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": response.get("message", ""),
@@ -92,6 +109,15 @@ def app():
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": response.get("message", "Unknown error.")
+                })
+            elif isinstance(response, dict) and response.get("type") == "text":
+                st.markdown(response.get("message", ""))
+                if response.get("source"):
+                    st.caption(f"📚 Source: {response['source']}")
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": response.get("message", ""),
+                    "source": response.get("source", "")
                 })
             else:
                 st.markdown(response)

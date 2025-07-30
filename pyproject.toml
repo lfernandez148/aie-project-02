@@ -12,6 +12,7 @@ dependencies = [
     "langchain-community>=0.3.27",
     "langchain-huggingface>=0.3.1",
     "langchain-openai>=0.3.28",
+    "langsmith>=0.4.8",
     "loguru>=0.7.3",
     "loki-logger-handler>=1.1.2",
     "numpy>=2.3.1",

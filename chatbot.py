@@ -18,6 +18,24 @@ LOGS_FOLDER = "logs"
 USE_LOCAL_LLM = os.getenv("USE_LOCAL_LLM", "false").lower() == "true"
 LM_STUDIO_URL = "http://localhost:1234"
 
+# LangSmith Configuration
+LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", "true").lower() == "true"
+LANGCHAIN_ENDPOINT = os.getenv(
+    "LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com"
+)
+LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY", "")
+LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "campaign-performance-assistant")
+
+# Set up LangSmith if API key is provided
+if LANGCHAIN_API_KEY:
+    os.environ["LANGCHAIN_TRACING_V2"] = "true"
+    os.environ["LANGCHAIN_ENDPOINT"] = LANGCHAIN_ENDPOINT
+    os.environ["LANGCHAIN_API_KEY"] = LANGCHAIN_API_KEY
+    os.environ["LANGCHAIN_PROJECT"] = LANGCHAIN_PROJECT
+    logger.info("LangSmith tracing enabled")
+else:
+    logger.info("LangSmith API key not found, tracing disabled")
+
 logger.add(
     f"{LOGS_FOLDER}/chatbot.log", 
     rotation="1 week", 
@@ -57,44 +75,11 @@ memory = ConversationBufferMemory(
 
 logger.info("Memory system initialized with conversation buffer")
 
-SAMPLE_QUESTIONS = [
-    "Show me the top 5 campaigns by conversion rate",
-    "What is the average open rate for all campaigns?",
-    "Compare campaign 101 and campaign 102",
-    "Show me a bar chart of audience volume by topic",
-    "List all campaigns for the Retail segment",
-    "Get summary statistics for all campaigns",
-    "Show me the top campaigns by clicks",
-    "What are the trends in conversion rate over time?",
-    "Show me a table of top campaigns by open rate",
-    "Show me the top 10 campaigns"
-]
-
-HELP_TRIGGERS = [
-    "what can i ask",
-    "what kind of question",
-    "help",
-    "examples",
-    "sample questions",
-    "how to use",
-    "what do you do",
-    "what can you do",
-    "how can you help"
-]
-
 
 def chat_query_with_direct_tools(user_query: str, session_id: str = "default") -> str:
     """Use direct function calling with memory."""
     logger.info(f"Processing query with memory: {user_query}")
     
-    # Check for help/example triggers
-    if any(trigger in user_query.lower() for trigger in HELP_TRIGGERS):
-        return {
-            "type": "examples",
-            "message": "Here are some sample questions you can ask:",
-            "examples": SAMPLE_QUESTIONS
-        }
-
     try:
         # Get conversation history from memory
         chat_history = memory.chat_memory.messages
@@ -185,17 +170,33 @@ def chat_query_with_direct_tools(user_query: str, session_id: str = "default") -
             
             # Check if any tool returned meaningful data
             meaningful_data = False
+            source_info = None
             for result in tool_results:
                 if result['tool_name'] == 'search_campaign_documents':
                     # For RAG tool, check if it found documents
-                    if "No relevant campaign documents found" not in result['result']:
-                        meaningful_data = True
-                        break
+                    if isinstance(result['result'], dict):
+                        if "No relevant campaign documents found" not in result['result'].get('message', ''):
+                            meaningful_data = True
+                            # Extract source information for later use
+                            source_info = result['result'].get('source', 'Vector Database')
+                            break
+                    else:
+                        if "No relevant campaign documents found" not in result['result']:
+                            meaningful_data = True
+                            break
                 else:
                     # For database tools, check if they returned data
-                    if isinstance(result['result'], str) and "not found" not in result['result'].lower() and "error" not in result['result'].lower():
-                        meaningful_data = True
-                        break
+                    if isinstance(result['result'], dict):
+                        message = result['result'].get('message', '')
+                        if "not found" not in message.lower() and "error" not in message.lower():
+                            meaningful_data = True
+                            # Extract source information for later use
+                            source_info = result['result'].get('source', 'Campaign Database')
+                            break
+                    elif isinstance(result['result'], str):
+                        if "not found" not in result['result'].lower() and "error" not in result['result'].lower():
+                            meaningful_data = True
+                            break
             
             if meaningful_data:
                 # Create a follow-up message with tool results
@@ -216,13 +217,24 @@ Please synthesize this information into a clear, helpful response that takes int
                 # Get final response
                 final_response = llm.invoke(follow_up_prompt)
                 final_answer = final_response.content
+                
+                # If we have source information, return a structured response
+                if source_info:
+                    return {
+                        "type": "text",
+                        "message": final_answer,
+                        "source": source_info
+                    }
+                else:
+                    return final_answer
             else:
                 # No meaningful data found
                 final_answer = (
                     "I couldn't find relevant campaign information for your question. "
                     "Please try rephrasing or ask about a specific campaign, metric, topic or segment!"
                 )
-            
+                return final_answer
+        
         else:
             # No tool calls needed, check if we should use RAG fallback
             logger.info("No tool calls requested, checking RAG fallback")
@@ -258,12 +270,15 @@ def chat_query_fallback_with_memory(user_query: str) -> str:
     # Get conversation history
     chat_history = memory.chat_memory.messages
     
-    context = retrieve_campaign_context(user_query)
-    if not context:
+    rag_result = retrieve_campaign_context(user_query)
+    if not rag_result:
         return (
             "I couldn't find relevant campaign information for your question. "
             "Please try rephrasing or ask about a specific campaign, metric, topic or segment!"
         )
+    
+    context = rag_result["context"]
+    source = rag_result["source"]
     
     # Create prompt with memory
     history_text = ""
@@ -281,7 +296,12 @@ def chat_query_fallback_with_memory(user_query: str) -> str:
     memory.chat_memory.add_user_message(user_query)
     memory.chat_memory.add_ai_message(response)
     
-    return response
+    # Return structured response with source
+    return {
+        "type": "text",
+        "message": response,
+        "source": source
+    }
 
 
 def call_llm_with_memory(user_query: str, context: str, history_text: str) -> str:
@@ -309,12 +329,32 @@ def retrieve_campaign_context(user_query: str):
     # Use similarity search with scores to filter relevant documents
     docs_and_scores = db.similarity_search_with_score(user_query, k=4)
     
-    # Filter documents with similarity score above threshold (0.5 is a good threshold)
+    # Filter documents with similarity score above threshold
     relevant_docs = []
+    sources = []
     for doc, score in docs_and_scores:
         logger.info(f"Document similarity score: {score:.4f}")
-        if score < 0.5:  # Lower score = more similar (cosine distance)
+        # For cosine distance: 0 = identical, 1 = orthogonal, 2 = opposite
+        # Use a more reasonable threshold for cosine distance
+        if score < 1.2:  # More reasonable threshold for cosine distance
             relevant_docs.append(doc)
+            # Extract source from metadata or document attributes
+            source = "Unknown document"
+            if hasattr(doc, 'metadata') and doc.metadata:
+                source = doc.metadata.get('source', 'Unknown document')
+            elif hasattr(doc, 'source'):
+                source = doc.source
+            else:
+                # Try to extract filename from metadata if available
+                if hasattr(doc, 'metadata') and doc.metadata:
+                    # Look for any metadata that might contain file info
+                    for key, value in doc.metadata.items():
+                        if 'source' in key.lower() or 'file' in key.lower():
+                            source = str(value)
+                            break
+            sources.append(source)
+        else:
+            logger.info(f"Document filtered out due to high score: {score:.4f}")
     
     if not relevant_docs:
         logger.warning(f"No relevant documents found for query: {user_query}")
@@ -334,7 +374,15 @@ def retrieve_campaign_context(user_query: str):
     context = "\n".join([doc.page_content for doc in relevant_docs])
     logger.debug(f"Context length: {len(context)} characters")
     logger.info(f"Full context preview: {context[:500]}...")
-    return context
+    
+    # Create source information
+    unique_sources = list(set(sources))
+    source_info = f"Vector Database ({', '.join(unique_sources)})"
+    
+    return {
+        "context": context,
+        "source": source_info
+    }
 
 
 def call_llm(user_query: str, context: str) -> str:

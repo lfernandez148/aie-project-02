@@ -20,4 +20,5 @@ fastapi
 uvicorn
 slowapi
 python-multipart
-plotly 
+plotly
+langsmith 

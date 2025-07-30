@@ -11,6 +11,7 @@ from langchain_community.document_loaders import (
     UnstructuredHTMLLoader, 
     UnstructuredWordDocumentLoader
 )
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 from loguru import logger
 import shutil
@@ -33,6 +34,14 @@ logger.add(
     rotation="1 week", 
     retention="4 weeks", 
     level="INFO"
+)
+
+# Initialize text splitter for chunking
+text_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=1000,  # Characters per chunk
+    chunk_overlap=200,  # Overlap between chunks
+    length_function=len,
+    separators=["\n\n", "\n", " ", ""]
 )
 
 
@@ -116,6 +125,9 @@ class DocumentHandler(FileSystemEventHandler):
             loader = get_loader_for_file(file_path)
             docs = loader.load()
             
+            # Split documents into chunks
+            text_chunks = text_splitter.split_documents(docs)
+            
             embeddings = HuggingFaceEmbeddings(
                 model_name="sentence-transformers/all-MiniLM-L6-v2"
             )
@@ -123,7 +135,7 @@ class DocumentHandler(FileSystemEventHandler):
                 persist_directory=CHROMA_DIR, 
                 embedding_function=embeddings
             )
-            db.add_documents(docs)
+            db.add_documents(text_chunks)
             logger.success(f"Ingested and indexed: {file_path}")
             
             # Move file to done folder

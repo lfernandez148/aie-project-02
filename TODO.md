@@ -11,7 +11,7 @@
 - [X] API endpoints for external integrations
 - [X] API key validation
 - [X] API limit rate
-- [ ] Add LangSmith
+- [X] Add LangSmith
 
 ## 🔧 Medium Priority
 
@@ -92,10 +92,10 @@
    * x Add logging and monitoring
    * x Include user input validation
    * x Implement rate limiting and API key management
-5. **User Interface:**
+5. **x User Interface:**
    * x Create an intuitive interface using Streamlit or Next.js
-   * Show relevant context and sources
-   * Display function call results
+   * x Show relevant context and sources
+   * x Display function call results
    * x Include progress indicators for long operations
 
 ---

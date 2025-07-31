@@ -21,20 +21,26 @@
 
 The following screenshots showcase the key features and user interface of the Campaign Performance Assistant:
 
+* Main chat interface with sample questions and conversation history
+
 ![Campaign Performance Assistant - Screenshot 1](documentation/images/01-cpa.jpeg)
-*Main chat interface with sample questions and conversation history*
+
+
+* Campaign Recommendations
 
 ![Campaign Performance Assistant - Screenshot 2](documentation/images/02-cpa.jpeg)
-*Campaign Recommendations*
+
+- Campaign information shown as table
 
 ![Campaign Performance Assistant - Screenshot 3](documentation/images/03-cpa.jpeg)
-*Campaign information shown as table*
+
+- Barchart capabilities
 
 ![Campaign Performance Assistant - Screenshot 4](documentation/images/04-cpa.jpeg)
-*Barchart capabilities*
+
+- Campaign comparison capabilities
 
 ![Campaign Performance Assistant - Screenshot 5](documentation/images/05-cpa.jpeg)
-*Campaign comparison capabilities*
 
 ---
 

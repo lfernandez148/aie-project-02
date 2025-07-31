@@ -93,7 +93,7 @@ The **Campaign Performance Assistant** is an AI-powered chatbot system that prov
 
 ## 🛠️ Tool Selection Process
 
-![Tool Selection Flow](diagrams/tool_selection_flow.png)
+![Tool Selection Flow](documentation/diagrams/tool_selection_flow.png)
 
 ### Available Tools
 
@@ -121,7 +121,7 @@ The LLM analyzes user queries and selects the most appropriate tool based on:
 
 ## 📄 Document Ingestion Pipeline
 
-![Document Ingestion Pipeline](diagrams/document_ingestion_pipeline.png)
+![Document Ingestion Pipeline](documentation/diagrams/document_ingestion_pipeline.png)
 
 ### Processing Steps
 
@@ -145,7 +145,7 @@ The LLM analyzes user queries and selects the most appropriate tool based on:
 
 ## 🔌 API Reference
 
-![API Endpoints](diagrams/api_endpoints.png)
+![API Endpoints](documentation/diagrams/api_endpoints.png)
 
 ### Health Endpoints
 

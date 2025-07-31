@@ -2,15 +2,39 @@
 
 ## 📋 Table of Contents
 
-1. [System Overview](#system-overview)
-2. [Architecture](#architecture)
-3. [Data Flow](#data-flow)
-4. [Tool Selection Process](#tool-selection-process)
-5. [Document Ingestion Pipeline](#document-ingestion-pipeline)
-6. [API Reference](#api-reference)
-7. [Installation & Setup](#installation--setup)
-8. [Usage Guide](#usage-guide)
-9. [Troubleshooting](#troubleshooting)
+1. [Screenshots](#screenshots)
+2. [System Overview](#system-overview)
+3. [Architecture](#architecture)
+4. [Data Flow](#data-flow)
+5. [Tool Selection Process](#tool-selection-process)
+6. [Document Ingestion Pipeline](#document-ingestion-pipeline)
+7. [API Reference](#api-reference)
+8. [Installation & Setup](#installation--setup)
+9. [Usage Guide](#usage-guide)
+10. [Troubleshooting](#troubleshooting)
+
+---
+
+## 📸 Screenshots
+
+### Campaign Performance Assistant Interface
+
+The following screenshots showcase the key features and user interface of the Campaign Performance Assistant:
+
+![Campaign Performance Assistant - Screenshot 1](documentation/images/01-cpa.jpeg)
+*Main chat interface with sample questions and conversation history*
+
+![Campaign Performance Assistant - Screenshot 2](documentation/images/02-cpa.jpeg)
+*Chart generation and data visualization capabilities*
+
+![Campaign Performance Assistant - Screenshot 3](documentation/images/03-cpa.jpeg)
+*Table display and structured data presentation*
+
+![Campaign Performance Assistant - Screenshot 4](documentation/images/04-cpa.jpeg)
+*Source attribution and document search functionality*
+
+![Campaign Performance Assistant - Screenshot 5](documentation/images/05-cpa.jpeg)
+*Advanced query handling and response generation*
 
 ---
 

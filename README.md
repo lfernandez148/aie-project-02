@@ -39,7 +39,7 @@ The **Campaign Performance Assistant** is an AI-powered chatbot system that prov
 
 ## 🏗️ Architecture
 
-![System Architecture](diagrams/system_architecture.png)
+![System Architecture](documentation/diagrams/system_architecture.png)
 
 ### Core Components
 
@@ -71,7 +71,7 @@ The **Campaign Performance Assistant** is an AI-powered chatbot system that prov
 
 ## 🔄 Data Flow
 
-![Data Flow](diagrams/data_flow.png)
+![Data Flow](documentation/diagrams/data_flow.png)
 
 ### Process Flow
 

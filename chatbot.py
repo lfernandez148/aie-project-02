@@ -18,12 +18,12 @@ LOGS_FOLDER = "logs"
 
 # Configuration: Choose between OpenAI and LM Studio
 USE_LOCAL_LLM = os.getenv("USE_LOCAL_LLM", "false").lower() == "true"
-LM_STUDIO_URL = "http://localhost:1234"
+LM_STUDIO_URL = os.getenv("LM_STUDIO_URL", "http://localhost:1234")
 
 # LangSmith Configuration
 if os.getenv("LANGCHAIN_TRACING_V2").lower() == "true":
     logger.info("LangSmith enabled")
-    os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
+    os.environ["LANGCHAIN_ENDPOINT"] = os.getenv("LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com")
     os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGCHAIN_API_KEY", "")
     os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGCHAIN_PROJECT", "campaign-performance-assistant")
     logger.info("LangSmith tracing enabled")

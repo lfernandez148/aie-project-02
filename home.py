@@ -8,15 +8,15 @@ import login
 
 # Sample questions and help message (should match chatbot.py)
 SAMPLE_QUESTIONS = [
-    "Executive summary for campaign 101",
-    "Top 10 performing campaigns",
-    "Show me a bar chart of audience volume by topic",
-    "Average open rate for all campaigns",
-    "Summary statistics for all campaigns",
-    "Conversion rate trends over time",
+    "Show executive summary for campaign 101",
+    "Provide summary statistics for all campaigns",
+    "Provide top 10 performing campaigns",
+    "Show average open rate for all campaigns",
+    "Display bar chart of audience volume by topic",
+    "Display conversion rate trends over time",
 ]
 
-HELP_MESSAGE = "For instance, you can ask me:"
+HELP_MESSAGE = "Examples of requests you can make:"
 
 
 def get_username():
@@ -27,9 +27,10 @@ def get_username():
 
 def app():
     st.title("Campaign Performance Assistant")
-    st.write(
+    st.markdown(
         """
-        I have access to your Campaign Performance Reports and Campaigns Database — just ask what’s on your mind, and I’ll do my best to help. 
+        I have access to your Campaign Performance Reports and Campaigns Database.  
+        I can assist you in retrieving and presenting the information you want.
         """
     )
 

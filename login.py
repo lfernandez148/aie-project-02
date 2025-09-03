@@ -1,17 +1,29 @@
 import streamlit as st
 import requests
 import json
+import os
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 firebase_config = {
-  "apiKey": "AIzaSyDGl0vRx0Zo9rrUfeuMvZwXoHgUWpHV8Sg",
-  "authDomain": "aie-cpa-project-3.firebaseapp.com",
-  "projectId": "aie-cpa-project-3",
-  "storageBucket": "aie-cpa-project-3.firebasestorage.app",
-  "messagingSenderId": "1047061534699",
-  "appId": "1:1047061534699:web:4a9d2aee01bd9fe4ed2bae",
-  "measurementId": "G-2KQXRFYG6B"
+  "apiKey": os.getenv("FIREBASE_API_KEY"),
+  "authDomain": os.getenv("FIREBASE_AUTH_DOMAIN"),
+  "projectId": os.getenv("FIREBASE_PROJECT_ID"),
+  "storageBucket": os.getenv("FIREBASE_STORAGE_BUCKET"),
+  "messagingSenderId": os.getenv("FIREBASE_MESSAGING_SENDER_ID"),
+  "appId": os.getenv("FIREBASE_APP_ID"),
+  "measurementId": os.getenv("FIREBASE_MEASUREMENT_ID")
 }
+
+# Validate that all required Firebase config values are loaded
+required_config_keys = ["apiKey", "authDomain", "projectId", "storageBucket", "messagingSenderId", "appId"]
+missing_keys = [key for key in required_config_keys if not firebase_config[key]]
+
+if missing_keys:
+    raise ValueError(f"Missing required Firebase configuration: {', '.join(missing_keys)}. Please check your .env file.")
 
 def authenticate_with_firebase(email: str, password: str) -> dict:
     """Authenticate with Firebase REST API."""

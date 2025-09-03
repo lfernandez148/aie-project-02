@@ -253,8 +253,20 @@ Authorization: Bearer sk-test-1234567890abcdef
 
    ```bash
    cp .env.example .env
-   # Edit .env with your API keys
+   # Edit .env with your API keys and Firebase configuration
    ```
+
+   **Required environment variables:**
+   - `OPENAI_API_KEY`: Your OpenAI API key
+   - `FIREBASE_API_KEY`: Firebase Web API key
+   - `FIREBASE_AUTH_DOMAIN`: Firebase auth domain
+   - `FIREBASE_PROJECT_ID`: Firebase project ID
+   - `FIREBASE_STORAGE_BUCKET`: Firebase storage bucket
+   - `FIREBASE_MESSAGING_SENDER_ID`: Firebase messaging sender ID
+   - `FIREBASE_APP_ID`: Firebase app ID
+   - `FIREBASE_MEASUREMENT_ID`: Firebase measurement ID (optional)
+   - `LANGCHAIN_API_KEY`: LangSmith API key (optional, for monitoring)
+   - `LANGCHAIN_PROJECT`: LangSmith project name (optional)
 5. **Initialize database**
 
    ```bash

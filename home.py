@@ -4,6 +4,7 @@ import streamlit as st
 from chatbot import chat_query, clear_memory, get_memory_stats
 from chart_utils import display_chart
 import pandas as pd
+import login
 
 # Sample questions and help message (should match chatbot.py)
 SAMPLE_QUESTIONS = [
@@ -16,6 +17,12 @@ SAMPLE_QUESTIONS = [
 ]
 
 HELP_MESSAGE = "For instance, you can ask me:"
+
+
+def get_username():
+    """Get the current username from session state, fallback to 'default'."""
+    user_info = login.get_current_user()
+    return user_info['username'] if user_info else "default"
 
 
 def app():
@@ -66,7 +73,7 @@ def app():
         # Display assistant response
         with st.chat_message("assistant", avatar="✨"):
             with st.spinner("Thinking..."):
-                response = chat_query(prompt)
+                response = chat_query(prompt, get_username())
             if isinstance(response, dict) and response.get("type") == "chart":
                 st.markdown(response.get("message", ""))
                 data = response.get("data", {})
@@ -124,6 +131,6 @@ def app():
         
         with col1:
             if st.button("Clear Chat History", type="secondary"):
-                clear_memory()
+                clear_memory(get_username())
                 st.session_state.messages = []
                 st.rerun()

@@ -299,7 +299,18 @@ def check_authentication():
     return st.session_state.get("authenticated", False)
 
 def logout():
-    auth_keys = ["authenticated", "user_email", "username", "login_time", "role", "user_id", "id_token", "auth_tab"]
+    # Clear user's conversation memory from chatbot before logout
+    try:
+        from chatbot import clear_memory
+        user_info = get_current_user()
+        if user_info:
+            clear_memory(user_info['username'])
+    except ImportError:
+        # If chatbot module is not available, just continue with logout
+        pass
+    
+    # Clear authentication and chat-related session state
+    auth_keys = ["authenticated", "user_email", "username", "login_time", "role", "user_id", "id_token", "auth_tab", "messages"]
     for key in auth_keys:
         if key in st.session_state:
             del st.session_state[key]

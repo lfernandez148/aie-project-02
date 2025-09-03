@@ -1,29 +1,29 @@
 # Campaign Performance Assistant - Chat Interface
 
 import streamlit as st
-from chatbot import chat_query, clear_memory
+from chatbot import chat_query, clear_memory, get_memory_stats
 from chart_utils import display_chart
 import pandas as pd
 
 # Sample questions and help message (should match chatbot.py)
 SAMPLE_QUESTIONS = [
-    "Any recommendations for campaign 101",
-    "Compare campaign 101 and campaign 102",
-    "What is the average open rate for all campaigns?",
-    "Show me a bar chart of audience volume by topic",
-    "Get summary statistics for all campaigns",
-    "What are the trends in conversion rate over time?",
-    "Top 10 performing campaings",
     "Executive summary for campaign 101",
+    "Top 10 performing campaigns",
+    "Show me a bar chart of audience volume by topic",
+    "Average open rate for all campaigns",
+    "Summary statistics for all campaigns",
+    "Conversion rate trends over time",
 ]
 
-HELP_MESSAGE = "Here are some sample questions you can ask:"
+HELP_MESSAGE = "For instance, you can ask me:"
 
 
 def app():
     st.title("Campaign Performance Assistant")
     st.write(
-        "Ask me anything about your campaign data! "
+        """
+        I have access to your Campaign Performance Reports and Campaigns Database — just ask what’s on your mind, and I’ll do my best to help. 
+        """
     )
 
     # Show sample questions as a static list below the intro
@@ -69,40 +69,32 @@ def app():
                 response = chat_query(prompt)
             if isinstance(response, dict) and response.get("type") == "chart":
                 st.markdown(response.get("message", ""))
-                display_chart(response.get("chart_type"))
-                if response.get("source"):
-                    st.caption(f"📚 Source: {response['source']}")
+                data = response.get("data", {})
+                display_chart(data.get("chart_type"))
+                if data.get("source"):
+                    st.caption(f"📚 Source: {data['source']}")
                 st.session_state.messages.append({
                     "role": "assistant",
-                    "content": response.get("message", ""),
-                    "chart_type": response.get("chart_type", None),
-                    "source": response.get("source", "")
+                    "content": data.get("message", ""),
+                    "chart_type": data.get("chart_type", None),
+                    "source": data.get("source", "")
                 })
             elif isinstance(response, dict) and response.get("type") == "table":
                 st.markdown(response.get("message", ""))
+                data = response.get("data", {})
                 st.dataframe(
-                    pd.DataFrame(response["rows"], columns=response["columns"])
+                    pd.DataFrame(data.get("rows",[]), columns=data.get("columns",[]))
                 )
-                if response.get("source"):
-                    st.caption(f"📚 Source: {response['source']}")
+                if data.get("source"):
+                    st.caption(f"📚 Source: {data['source']}")
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": response.get("message", ""),
                     "table_data": {
-                        "columns": response["columns"],
-                        "rows": response["rows"]
+                        "columns": data.get("columns", []),
+                        "rows": data.get("rows", [])
                     },
-                    "source": response.get("source", "")
-                })
-            elif isinstance(response, dict) and response.get("type") == "examples":
-                st.markdown(response.get("message", ""))
-                st.markdown(
-                    "\n".join([f"- {q}" for q in response.get("examples", [])])
-                )
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": response.get("message", ""),
-                    "examples": response.get("examples", [])
+                    "source": data.get("source", "")
                 })
             elif isinstance(response, dict) and response.get("type") == "error":
                 st.error(response.get("message", "Unknown error."))
@@ -132,12 +124,6 @@ def app():
         
         with col1:
             if st.button("Clear Chat History", type="secondary"):
+                clear_memory()
                 st.session_state.messages = []
                 st.rerun()
-        
-        with col2:
-            if st.button("Clear Memory", type="secondary"):
-                clear_memory()
-                st.success("Memory cleared! The assistant will start fresh.")
-        
-

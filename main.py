@@ -5,22 +5,30 @@ from streamlit_option_menu import option_menu
 import home
 import account
 import admin
+import login  # Import the login module
 
-st.set_page_config(
-    page_title="CPAssist",
-)
+# Initialize session state
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
 
-if "user" not in st.session_state:
-    st.session_state.user = "admin"
-    st.session_state.email = "admin@my_company.com"
-
-
-def run():
+def run_authenticated_app():
+    """Run the main application for authenticated users."""
+    st.set_page_config(
+        page_title="CPAssist",
+    )
+    
+    # Get current user info
+    user_info = login.get_current_user()
+    
     with st.sidebar:
+        # User info display
+        st.markdown(f"User: {user_info['email']}")
+        
+        # Main navigation
         app = option_menu(
             menu_title='CPAssist',
-            options=['Home', 'Account', 'Admin'],
-            icons=['house-fill', 'person-circle', 'trophy-fill'],
+            options=['Home', 'Account', 'Admin', 'Logout'],
+            icons=['house-fill', 'person-circle', 'trophy-fill', 'door-open'],
             menu_icon='',
             default_index=0,
             styles={
@@ -39,12 +47,31 @@ def run():
                 "nav-link-selected": {"background-color": "#02ab21"},
             }
         )
+    
+    # Route to appropriate page
     if app == "Home":
         home.app()
-    if app == "Account":
+    elif app == "Account":
         account.app()
-    if app == 'Admin':
-        admin.app()
+    elif app == 'Admin':
+        # Check if user has admin role
+        if user_info['role'] == 'admin':
+            admin.app()
+        else:
+            st.error("Access denied. Admin privileges required.")
+            st.info("Contact your administrator for access.")
+    elif app == 'Logout':
+        login.logout()
 
+def run():
+    """Main application entry point."""
+    # Check authentication
+    if not login.check_authentication():
+        # Show login page
+        login.login_page()
+    else:
+        # Show main application
+        run_authenticated_app()
 
-run()            
+if __name__ == "__main__":
+    run()

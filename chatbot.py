@@ -1,17 +1,19 @@
 # chatbot.py
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
 from langchain_openai import ChatOpenAI
-from langchain.memory import ConversationBufferMemory
-from langchain.schema import HumanMessage, AIMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage
+from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.sqlite import SqliteSaver
+from typing import TypedDict, Annotated, Sequence
 from loguru import logger
 from dotenv import load_dotenv
 from llm_tools import LLM_TOOLS
 import os
+import operator
+import ast
+import sqlite3
 
 load_dotenv()
 
-CHROMA_DIR = "chroma_db"
 LOGS_FOLDER = "logs"
 
 # Configuration: Choose between OpenAI and LM Studio
@@ -19,22 +21,14 @@ USE_LOCAL_LLM = os.getenv("USE_LOCAL_LLM", "false").lower() == "true"
 LM_STUDIO_URL = "http://localhost:1234"
 
 # LangSmith Configuration
-LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", "true").lower() == "true"
-LANGCHAIN_ENDPOINT = os.getenv(
-    "LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com"
-)
-LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY", "")
-LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "campaign-performance-assistant")
-
-# Set up LangSmith if API key is provided
-if LANGCHAIN_API_KEY:
-    os.environ["LANGCHAIN_TRACING_V2"] = "true"
-    os.environ["LANGCHAIN_ENDPOINT"] = LANGCHAIN_ENDPOINT
-    os.environ["LANGCHAIN_API_KEY"] = LANGCHAIN_API_KEY
-    os.environ["LANGCHAIN_PROJECT"] = LANGCHAIN_PROJECT
+if os.getenv("LANGCHAIN_TRACING_V2").lower() == "true":
+    logger.info("LangSmith enabled")
+    os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
+    os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGCHAIN_API_KEY", "")
+    os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGCHAIN_PROJECT", "campaign-performance-assistant")
     logger.info("LangSmith tracing enabled")
 else:
-    logger.info("LangSmith API key not found, tracing disabled")
+    logger.info("LangSmith disabled")
 
 logger.add(
     f"{LOGS_FOLDER}/chatbot.log", 
@@ -42,13 +36,6 @@ logger.add(
     retention="4 weeks", 
     level="INFO"
 )
-
-# Load the persisted Chroma DB and retriever
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
-)
-db = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
-retriever = db.as_retriever(search_kwargs={"k": 4})
 
 # Initialize LLM based on configuration
 if USE_LOCAL_LLM:
@@ -66,356 +53,302 @@ else:
         model="gpt-3.5-turbo"  # or any other OpenAI model
     )
 
-# Initialize conversation memory
-memory = ConversationBufferMemory(
-    memory_key="chat_history",
-    return_messages=True,
-    max_token_limit=2000  # Limit memory to prevent token overflow
-)
-
-logger.info("Memory system initialized with conversation buffer")
+# LangGraph checkpointer
+db_path = "workflow_memory.db"
+conn = sqlite3.connect(db_path, check_same_thread=False)
+checkpointer = SqliteSaver(conn)
 
 
-def chat_query_with_direct_tools(user_query: str, session_id: str = "default") -> str:
-    """Use direct function calling with memory."""
-    logger.info(f"Processing query with memory: {user_query}")
+def message_reducer(existing: Sequence[BaseMessage], new: Sequence[BaseMessage]) -> Sequence[BaseMessage]:
+    """Keep only the last n messages to prevent unlimited growth."""
+
+    # Combine existing and new messages
+    all_messages = list(existing) + list(new)
+
+    # Keep only the last n messages
+    n = 10
+    last_n_messages = all_messages[-n:]
+    valid_messages = []
+    add_all_the_rest = False
+    for msg in last_n_messages:
+        if isinstance(msg, HumanMessage) or add_all_the_rest: # If it's a human message or we already decided to add all
+            add_all_the_rest = True
+            valid_messages.append(msg)
+    
+    return valid_messages
+
+
+# Define the state for the agent
+class AgentState(TypedDict):
+    messages: Annotated[Sequence[BaseMessage], message_reducer]
+    data: dict
+
+def chat_query_with_custom_agent(user_query: str, session_id: str = "default") -> str:
+    """Use custom LangGraph agent with SQLite checkpointer."""
+    logger.info(f"Processing query with LangGraph agent: {user_query} [Session: {session_id}]")
     
     try:
-        # Get conversation history from memory
-        chat_history = memory.chat_memory.messages
-        logger.info(f"Retrieved {len(chat_history)} messages from memory")
-        
-        # Use all tools from llm_tools (includes RAG and database tools)
+        # Use all tools from llm_tools
         all_tools = LLM_TOOLS
         
-        # Log available tools for debugging
-        logger.info(f"Available tools: {[tool.name for tool in all_tools]}")
+        # Create a tool lookup dictionary
+        tools_dict = {tool.name: tool for tool in all_tools}
         
         # Bind tools to the LLM
         llm_with_tools = llm.bind_tools(all_tools)
         
-        # Create messages with history
-        messages = []
+        # Define the agent node
+        def call_model(state):
+            logger.info(f"call_model()")
+            messages = state["messages"]
+            logger.info(f"\n\n messages: {messages}")
+            data = state.get("data", {})
+            logger.info(f"\n\n data: {data}")
+            response = llm_with_tools.invoke(messages)
+            return {"messages": [response]}
         
-        # Add system message with context about being a campaign assistant
-        system_message = HumanMessage(content=(
-            "You are a Campaign Performance Assistant. "
-            "You ONLY answer questions about campaign data and marketing campaigns. "
-            "Use the available tools to get accurate information and provide helpful insights. "
-            "If no relevant campaign data is found, respond with: "
-            "'I'm only able to answer questions about campaign data. "
-            "Please ask something related to your campaigns.' "
-            "Always be conversational and remember previous context from the conversation."
-        ))
-        messages.append(system_message)
-        
-        # Add conversation history
-        messages.extend(chat_history)
-        
-        # Add current user query
-        messages.append(HumanMessage(content=user_query))
-        
-        # Get response with potential tool calls
-        response = llm_with_tools.invoke(messages)
-        
-        # Check if the LLM wants to call any tools
-        if response.tool_calls:
-            logger.info(f"LLM requested {len(response.tool_calls)} tool calls")
-            
-            # Execute each tool call
-            tool_results = []
-            for tool_call in response.tool_calls:
+        # Define the tool execution node
+        def call_tools(state):
+            logger.info(f"call_tools()")
+            messages = state["messages"]
+            data = state.get("data", {})
+            last_message = messages[-1]
+
+            # Execute tool calls
+            tool_messages = []
+            for tool_call in last_message.tool_calls:
                 tool_name = tool_call["name"]
-                tool_args = tool_call["args"]
+                tool_input = tool_call["args"]
                 
-                logger.info(f"Executing tool: {tool_name} with args: {tool_args}")
-                
-                # Find and execute the appropriate tool
-                tool_executed = False
-                for available_tool in all_tools:
-                    if available_tool.name == tool_name:
-                        logger.info(f"Found matching tool: {available_tool.name}")
-                        result = available_tool.invoke(tool_args)
-                        logger.info(f"Tool result: {result}")
-                        tool_results.append({
-                            "tool_name": tool_name,
-                            "result": result
-                        })
-                        tool_executed = True
+                if tool_name in tools_dict:
+                    try:
+                        response = tools_dict[tool_name].invoke(tool_input)
+                        tool_message = ToolMessage(
+                            content=str(response),
+                            name=tool_name,
+                            tool_call_id=tool_call["id"]
+                        )
+                        tool_messages.append(tool_message)
+
+                        if isinstance(response, dict) and response.get('type') in ['table']:
+                            logger.info(f"resonse: is table")
+                            data = response #ast.literal_eval(response)
+                            logger.info(f"\n\n data type: {type(data)}")
+                            logger.info(f"\n data: {data}")
+
+                        if isinstance(response, dict) and response.get('type') in ['chart']:
+                            logger.info(f"resonse: is chart")
+                            data = response #ast.literal_eval(response)
+                            logger.info(f"\n\n data type: {type(data)}")
+                            logger.info(f"\n data: {data}")
+
+                    except Exception as e:
+                        error_message = ToolMessage(
+                            content=f"Error executing tool {tool_name}: {str(e)}",
+                            name=tool_name,
+                            tool_call_id=tool_call["id"]
+                        )
+                        tool_messages.append(error_message)
+                else:
+                    error_message = ToolMessage(
+                        content=f"Unknown tool: {tool_name}",
+                        name=tool_name,
+                        tool_call_id=tool_call["id"]
+                    )
+                    tool_messages.append(error_message)
+            
+            return {
+                "messages": tool_messages,
+                "data": data
+                }
+        
+        # Define the condition to decide next step
+        def should_continue(state):
+            messages = state["messages"]
+            last_message = messages[-1]
+            if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
+                return "tools"
+            return END
+        
+        # Create the graph
+        workflow = StateGraph(AgentState)
+        
+        # Add nodes
+        workflow.add_node("agent", call_model)
+        workflow.add_node("tools", call_tools)
+        
+        # Set entry point
+        workflow.set_entry_point("agent")
+        
+        # Add conditional edges
+        workflow.add_conditional_edges(
+            "agent",
+            should_continue,
+            {
+                "tools": "tools",
+                END: END
+            }
+        )
+        
+        # Add edge from tools back to agent
+        workflow.add_edge("tools", "agent")
+
+        # Compile the graph with SQLite checkpointer
+        app = workflow.compile(checkpointer=checkpointer)
+        
+        # Create thread config for this session
+        thread_config = {"configurable": {"thread_id": session_id}}
+        
+        # Prepare initial messages (only system message and current query)
+        # Checkpointer automatically handles conversation history
+        initial_messages = [
+            SystemMessage(content=(
+                "You are a Campaign Performance Assistant that responds polite and professional to queries about campaign data. "
+                "Use the available tools to get accurate information, do not make up answers. "
+                "If no relevant campaign data is found, respond with: I don't have any information on that."
+            )),
+            HumanMessage(content=user_query)
+        ]
+        
+        # Run the agent with checkpointer
+        logger.info("Before: app.invoke with checkpointer")
+        result = app.invoke(
+            {"messages": initial_messages, "data": {}}, 
+            config=thread_config  # This enables session persistence
+        )
+        logger.info("After: app.invoke with checkpointer")
+
+        # Get the final AI message
+        final_message = result["messages"][-1]
+        final_answer = final_message.content
+        logger.info(f"\n final_answer: {final_answer}")
+        data = result["data"]
+
+        # Check if we got a table from tools
+        if isinstance(data, dict) and data.get('type') == 'table':
+            logger.info(f"final_answer: is table")
+            logger.info(f"data type: {type(data)}")
+            final_answer = {
+                "type": "table",
+                "message": "Here are the results",
+                "data": data,
+            }
+            logger.info(f"\n \n final_answer: {final_answer}")
+            return final_answer
+        
+        # Check if we got a chart from tools
+        if isinstance(data, dict) and data.get('type') == 'chart':
+            logger.info(f"final_answer: is chart")
+            logger.info(f"data type: {type(data)}")
+            final_answer = {
+                "type": "chart",
+                "message": "Here are the results",
+                "data": data,
+            }
+            logger.info(f"\n \n final_answer: {final_answer}")
+            return final_answer
+
+
+        # Check if we got meaningful data by examining tool messages
+        tool_messages = [msg for msg in result["messages"] if isinstance(msg, ToolMessage)]
+        meaningful_data = False
+        source_info = None
+        
+        for tool_msg in tool_messages:
+            try:
+                tool_content_dict = ast.literal_eval(tool_msg.content)
+                if "No relevant campaign documents found" not in tool_msg.content:
+                    if "not found" not in tool_msg.content.lower() and "error" not in tool_msg.content.lower():
+                        meaningful_data = True
+                        source_info = tool_content_dict.get('source')
                         break
-                
-                if not tool_executed:
-                    logger.warning(f"Tool not found: {tool_name}")
-                    result = f"Unknown tool: {tool_name}"
-                    tool_results.append({
-                        "tool_name": tool_name,
-                        "result": result
-                    })
-            
-            # PATCH: If any tool result is a chart dict, return it immediately
-            for result in tool_results:
-                if isinstance(result['result'], dict) and result['result'].get('type') == 'chart':
-                    # Save conversation to memory
-                    memory.chat_memory.add_user_message(user_query)
-                    memory.chat_memory.add_ai_message(result['result'].get('message', ''))
-                    logger.info("Returning chart tool result directly to UI.")
-                    return result['result']
-            # PATCH: If any tool result is a table dict, return it immediately
-            for result in tool_results:
-                if isinstance(result['result'], dict) and result['result'].get('type') == 'table':
-                    memory.chat_memory.add_user_message(user_query)
-                    memory.chat_memory.add_ai_message(result['result'].get('message', ''))
-                    logger.info("Returning table tool result directly to UI.")
-                    return result['result']
-            
-            # Check if any tool returned meaningful data
-            meaningful_data = False
-            source_info = None
-            for result in tool_results:
-                if result['tool_name'] == 'search_campaign_documents':
-                    # For RAG tool, check if it found documents
-                    if isinstance(result['result'], dict):
-                        if "No relevant campaign documents found" not in result['result'].get('message', ''):
-                            meaningful_data = True
-                            # Extract source information for later use
-                            source_info = result['result'].get('source', 'Vector Database')
-                            break
-                    else:
-                        if "No relevant campaign documents found" not in result['result']:
-                            meaningful_data = True
-                            break
-                else:
-                    # For database tools, check if they returned data
-                    if isinstance(result['result'], dict):
-                        message = result['result'].get('message', '')
-                        if "not found" not in message.lower() and "error" not in message.lower():
-                            meaningful_data = True
-                            # Extract source information for later use
-                            source_info = result['result'].get('source', 'Campaign Database')
-                            break
-                    elif isinstance(result['result'], str):
-                        if "not found" not in result['result'].lower() and "error" not in result['result'].lower():
-                            meaningful_data = True
-                            break
-            
-            if meaningful_data:
-                # Create a follow-up message with tool results
-                tool_results_text = "\n\n".join([
-                    f"Tool {result['tool_name']} result:\n{result['result']}"
-                    for result in tool_results
-                ])
-                
-                follow_up_prompt = f"""
-Based on the tool results below and our conversation history, please provide a comprehensive answer to the user's question: "{user_query}"
-
-Tool Results:
-{tool_results_text}
-
-Please synthesize this information into a clear, helpful response that takes into account our previous conversation.
-                """.strip()
-                
-                # Get final response
-                final_response = llm.invoke(follow_up_prompt)
-                final_answer = final_response.content
-                
-                # If we have source information, return a structured response
-                if source_info:
-                    return {
-                        "type": "text",
-                        "message": final_answer,
-                        "source": source_info
-                    }
-                else:
-                    return final_answer
-            else:
-                # No meaningful data found
-                final_answer = (
-                    "I couldn't find relevant campaign information for your question. "
-                    "Please try rephrasing or ask about a specific campaign, metric, topic or segment!"
-                )
-                return final_answer
+            except (ValueError, SyntaxError):
+                # If content isn't a valid Python literal, check as string
+                if "No relevant campaign documents found" not in tool_msg.content:
+                    if "not found" not in tool_msg.content.lower() and "error" not in tool_msg.content.lower():
+                        meaningful_data = True
+                        break
         
-        else:
-            # No tool calls needed, check if we should use RAG fallback
-            logger.info("No tool calls requested, checking RAG fallback")
-            context = retrieve_campaign_context(user_query)
-            if context:
-                # Use RAG fallback since we found relevant documents
-                final_answer = call_llm_with_memory(user_query, context, "")
-            else:
-                # No relevant data found
-                final_answer = (
-                    "I couldn't find relevant campaign information for your question. "
-                    "Please try rephrasing or ask about a specific campaign, metric, topic or segment!"
-                )
+        if not meaningful_data:
+            final_answer = (
+                "I couldn't find relevant campaign information for your question. "
+                "Please try rephrasing or ask about a specific campaign, metric, topic or segment!"
+            )
         
-        # Save conversation to memory
-        memory.chat_memory.add_user_message(user_query)
-        memory.chat_memory.add_ai_message(final_answer)
+        # No manual memory saving needed - checkpointer handles it automatically
+        logger.info(f"Conversation automatically saved to SQLite for session: {session_id}")
         
-        logger.info(f"Saved conversation to memory. Total messages: {len(memory.chat_memory.messages)}")
+        # Return structured response if we have source info
+        if source_info:
+            return {
+                "type": "text",
+                "message": final_answer,
+                "source": source_info
+            }
         
         return final_answer
-            
+        
     except Exception as e:
-        logger.error(f"Error in direct tool calling with memory: {e}")
+        logger.error(f"Error in custom LangGraph agent: {e}")
         # Fallback to simple RAG with memory
-        return chat_query_fallback_with_memory(user_query)
-
-
-def chat_query_fallback_with_memory(user_query: str) -> str:
-    """Fallback to simple RAG method with memory."""
-    logger.info(f"Using fallback RAG method with memory for: {user_query}")
-    
-    # Get conversation history
-    chat_history = memory.chat_memory.messages
-    
-    rag_result = retrieve_campaign_context(user_query)
-    if not rag_result:
         return (
             "I couldn't find relevant campaign information for your question. "
             "Please try rephrasing or ask about a specific campaign, metric, topic or segment!"
         )
-    
-    context = rag_result["context"]
-    source = rag_result["source"]
-    
-    # Create prompt with memory
-    history_text = ""
-    if chat_history:
-        history_text = "\n\nPrevious conversation:\n"
-        for msg in chat_history[-4:]:  # Last 4 messages for context
-            if isinstance(msg, HumanMessage):
-                history_text += f"User: {msg.content}\n"
-            elif isinstance(msg, AIMessage):
-                history_text += f"Assistant: {msg.content}\n"
-    
-    response = call_llm_with_memory(user_query, context, history_text)
-    
-    # Save to memory
-    memory.chat_memory.add_user_message(user_query)
-    memory.chat_memory.add_ai_message(response)
-    
-    # Return structured response with source
-    return {
-        "type": "text",
-        "message": response,
-        "source": source
-    }
 
 
-def call_llm_with_memory(user_query: str, context: str, history_text: str) -> str:
-    """LLM call method with memory."""
-    logger.info(f"Generating response with memory for query: {user_query}")
-    
-    prompt = (
-        f"You are a helpful Campaign Performance Assistant. "
-        f"Use the campaign data and conversation history to answer the question.\n\n"
-        f"{history_text}\n"
-        f"Campaign Data:\n{context}\n\n"
-        f"Question: {user_query}\n"
-        f"Answer:"
-    )
-    
-    response = llm.invoke(prompt)
-    logger.success(f"Generated response with memory for query: {user_query}")
-    return response.content.strip()
+def chat_query(user_query: str, session_id: str = "default") -> str:
+    """Main chat function - uses LangGraph agent with SQLite checkpointer."""
+    return chat_query_with_custom_agent(user_query, session_id)
 
 
-def retrieve_campaign_context(user_query: str):
-    """Original RAG context retrieval with similarity threshold."""
-    logger.info(f"Processing query: {user_query}")
-    
-    # Use similarity search with scores to filter relevant documents
-    docs_and_scores = db.similarity_search_with_score(user_query, k=4)
-    
-    # Filter documents with similarity score above threshold
-    relevant_docs = []
-    sources = []
-    for doc, score in docs_and_scores:
-        logger.info(f"Document similarity score: {score:.4f}")
-        # For cosine distance: 0 = identical, 1 = orthogonal, 2 = opposite
-        # Use a more reasonable threshold for cosine distance
-        if score < 1.2:  # More reasonable threshold for cosine distance
-            relevant_docs.append(doc)
-            # Extract source from metadata or document attributes
-            source = "Unknown document"
-            if hasattr(doc, 'metadata') and doc.metadata:
-                source = doc.metadata.get('source', 'Unknown document')
-            elif hasattr(doc, 'source'):
-                source = doc.source
-            else:
-                # Try to extract filename from metadata if available
-                if hasattr(doc, 'metadata') and doc.metadata:
-                    # Look for any metadata that might contain file info
-                    for key, value in doc.metadata.items():
-                        if 'source' in key.lower() or 'file' in key.lower():
-                            source = str(value)
-                            break
-            sources.append(source)
+def clear_memory(session_id: str = "default"):
+    """Clear conversation history for a specific session."""
+    try:
+        # Use the same database connection that the checkpointer uses
+        cursor = conn.cursor()
+        
+        # Clear all checkpoints for this specific thread_id
+        cursor.execute("DELETE FROM checkpoints WHERE thread_id = ?", (session_id,))
+        conn.commit()
+        
+        logger.info(f"Cleared conversation history for session: {session_id}")
+        return {"status": "success", "session_id": session_id}
+        
+    except Exception as e:
+        logger.error(f"Error clearing memory for session {session_id}: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+def get_memory_stats(session_id: str = "default"):
+    """Get statistics about conversation history for a session."""
+    try:
+        thread_config = {"configurable": {"thread_id": session_id}}
+        
+        # Get current state for this thread
+        checkpoint_tuple = checkpointer.get_tuple(thread_config)
+        if checkpoint_tuple and checkpoint_tuple.checkpoint:
+            messages = checkpoint_tuple.checkpoint.get("channel_values", {}).get("messages", [])
+            return {
+                "session_id": session_id,
+                "total_messages": len(messages),
+                "user_messages": len([m for m in messages if isinstance(m, HumanMessage)]),
+                "ai_messages": len([m for m in messages if isinstance(m, AIMessage)]),
+                "storage": "SQLite",
+                "status": "active" if messages else "empty"
+            }
         else:
-            logger.info(f"Document filtered out due to high score: {score:.4f}")
-    
-    if not relevant_docs:
-        logger.warning(f"No relevant documents found for query: {user_query}")
-        return None
-    
-    logger.info(f"Retrieved {len(relevant_docs)} relevant documents")
-    
-    # Log details about each retrieved document
-    for i, doc in enumerate(relevant_docs):
-        logger.info(f"Document {i+1}:")
-        logger.info(f"  Content preview: {doc.page_content[:200]}...")
-        if hasattr(doc, 'metadata') and doc.metadata:
-            logger.info(f"  Metadata: {doc.metadata}")
-        else:
-            logger.info("  Metadata: None")
-    
-    context = "\n".join([doc.page_content for doc in relevant_docs])
-    logger.debug(f"Context length: {len(context)} characters")
-    logger.info(f"Full context preview: {context[:500]}...")
-    
-    # Create source information
-    unique_sources = list(set(sources))
-    source_info = f"Vector Database ({', '.join(unique_sources)})"
-    
-    return {
-        "context": context,
-        "source": source_info
-    }
-
-
-def call_llm(user_query: str, context: str) -> str:
-    """Original LLM call method."""
-    logger.info(f"Generating response for query: {user_query}")
-    prompt = (
-        f"Use only the following campaign data to answer the question.\n"
-        f"Campaign Data:\n{context}\n\n"
-        f"Question: {user_query}\n"
-        f"Answer:"
-    )
-    response = llm.invoke(prompt)
-    logger.success(f"Generated response for query: {user_query}")
-    return response.content.strip()
-
-
-def chat_query(user_query: str) -> str:
-    """Main chat function - uses direct tools with memory."""
-    return chat_query_with_direct_tools(user_query)
-
-
-def clear_memory():
-    """Clear the conversation memory."""
-    memory.clear()
-    logger.info("Conversation memory cleared")
-
-
-def get_memory_stats():
-    """Get statistics about the conversation memory."""
-    messages = memory.chat_memory.messages
-    return {
-        "total_messages": len(messages),
-        "user_messages": len([m for m in messages if isinstance(m, HumanMessage)]),
-        "ai_messages": len([m for m in messages if isinstance(m, AIMessage)]),
-        "memory_usage": "active" if messages else "empty"
-    }
+            return {
+                "session_id": session_id,
+                "total_messages": 0,
+                "storage": "SQLite",
+                "status": "empty"
+            }
+            
+    except Exception as e:
+        logger.error(f"Error getting memory stats for session {session_id}: {e}")
+        return {
+            "session_id": session_id,
+            "status": "error",
+            "message": str(e)
+        }

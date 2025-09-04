@@ -58,6 +58,76 @@ db_path = "workflow_memory.db"
 conn = sqlite3.connect(db_path, check_same_thread=False)
 checkpointer = SqliteSaver(conn)
 
+# Token tracking functions
+def init_token_tracking():
+    """Initialize token usage tracking table."""
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS token_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT,
+                thread_id TEXT,
+                input_tokens INTEGER DEFAULT 0,
+                output_tokens INTEGER DEFAULT 0,
+                total_tokens INTEGER DEFAULT 0,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                query_text TEXT
+            )
+        """)
+        conn.commit()
+        logger.info("Token tracking table initialized")
+    except Exception as e:
+        logger.error(f"Error initializing token tracking: {e}")
+
+def save_token_usage(user_id: str, thread_id: str, input_tokens: int, output_tokens: int, query_text: str = ""):
+    """Save token usage to database."""
+    try:
+        total_tokens = input_tokens + output_tokens
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO token_usage (user_id, thread_id, input_tokens, output_tokens, total_tokens, query_text)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (user_id, thread_id, input_tokens, output_tokens, total_tokens, query_text[:200]))
+        conn.commit()
+        logger.info(f"Token usage saved - User: {user_id}, Thread: {thread_id}, Total: {total_tokens}")
+    except Exception as e:
+        logger.error(f"Error saving token usage: {e}")
+
+def get_user_token_stats(user_id: str):
+    """Get token usage statistics for a specific user."""
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT 
+                COUNT(*) as total_queries,
+                SUM(input_tokens) as total_input_tokens,
+                SUM(output_tokens) as total_output_tokens,
+                SUM(total_tokens) as total_tokens,
+                AVG(total_tokens) as avg_tokens_per_query
+            FROM token_usage 
+            WHERE user_id = ?
+        """, (user_id,))
+        
+        result = cursor.fetchone()
+        if result and result[0] > 0:
+            return {
+                "user_id": user_id,
+                "total_queries": result[0],
+                "total_input_tokens": result[1] or 0,
+                "total_output_tokens": result[2] or 0,
+                "total_tokens": result[3] or 0,
+                "avg_tokens_per_query": round(result[4] or 0, 2)
+            }
+        return {"user_id": user_id, "total_queries": 0, "total_tokens": 0}
+        
+    except Exception as e:
+        logger.error(f"Error getting token stats: {e}")
+        return {"status": "error", "message": str(e)}
+
+# Initialize token tracking when module loads
+init_token_tracking()
+
 
 def message_reducer(existing: Sequence[BaseMessage], new: Sequence[BaseMessage]) -> Sequence[BaseMessage]:
     """Keep only the last n messages to prevent unlimited growth."""
@@ -83,9 +153,13 @@ class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], message_reducer]
     data: dict
 
-def chat_query_with_custom_agent(user_query: str, session_id: str = "default") -> str:
+def chat_query_with_custom_agent(user_query: str, thread_id: str = "default", user_id: str = None) -> str:
     """Use custom LangGraph agent with SQLite checkpointer."""
-    logger.info(f"Processing query with LangGraph agent: {user_query} [Session: {session_id}]")
+    logger.info(f"Processing query with LangGraph agent: {user_query} [Thread: {thread_id}, User: {user_id}]")
+    
+    # Track tokens - simple counters
+    total_input_tokens = 0
+    total_output_tokens = 0
     
     try:
         # Use all tools from llm_tools
@@ -97,19 +171,29 @@ def chat_query_with_custom_agent(user_query: str, session_id: str = "default") -
         # Bind tools to the LLM
         llm_with_tools = llm.bind_tools(all_tools)
         
-        # Define the agent node
+        # Define the agent node with token tracking
         def call_model(state):
-            logger.info(f"call_model()")
+            nonlocal total_input_tokens, total_output_tokens
+            logger.info(f"call_model() - User: {user_id}, Thread: {thread_id}")
             messages = state["messages"]
             logger.info(f"\n\n messages: {messages}")
             data = state.get("data", {})
             logger.info(f"\n\n data: {data}")
+            
             response = llm_with_tools.invoke(messages)
+            
+            # Simple token tracking - extract from response if available
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                usage = response.usage_metadata
+                total_input_tokens += usage.get('input_tokens', 0)
+                total_output_tokens += usage.get('output_tokens', 0)
+                logger.info(f"Tokens - Input: {usage.get('input_tokens', 0)}, Output: {usage.get('output_tokens', 0)}")
+            
             return {"messages": [response]}
         
         # Define the tool execution node
         def call_tools(state):
-            logger.info(f"call_tools()")
+            logger.info(f"call_tools() - Thread: {thread_id}")
             messages = state["messages"]
             data = state.get("data", {})
             last_message = messages[-1]
@@ -131,14 +215,14 @@ def chat_query_with_custom_agent(user_query: str, session_id: str = "default") -
                         tool_messages.append(tool_message)
 
                         if isinstance(response, dict) and response.get('type') in ['table']:
-                            logger.info(f"resonse: is table")
-                            data = response #ast.literal_eval(response)
+                            logger.info(f"response: is table")
+                            data = response
                             logger.info(f"\n\n data type: {type(data)}")
                             logger.info(f"\n data: {data}")
 
                         if isinstance(response, dict) and response.get('type') in ['chart']:
-                            logger.info(f"resonse: is chart")
-                            data = response #ast.literal_eval(response)
+                            logger.info(f"response: is chart")
+                            data = response
                             logger.info(f"\n\n data type: {type(data)}")
                             logger.info(f"\n data: {data}")
 
@@ -160,7 +244,7 @@ def chat_query_with_custom_agent(user_query: str, session_id: str = "default") -
             return {
                 "messages": tool_messages,
                 "data": data
-                }
+            }
         
         # Define the condition to decide next step
         def should_continue(state):
@@ -196,8 +280,15 @@ def chat_query_with_custom_agent(user_query: str, session_id: str = "default") -
         # Compile the graph with SQLite checkpointer
         app = workflow.compile(checkpointer=checkpointer)
         
-        # Create thread config for this session
-        thread_config = {"configurable": {"thread_id": session_id}}
+        # Enhanced thread config with user info
+        thread_config = {
+            "configurable": {
+                "thread_id": thread_id,
+                "user_id": user_id or "anonymous"
+            }
+        }
+        
+        logger.info(f"Thread config: {thread_config}")
         
         # Prepare initial messages (only system message and current query)
         # Checkpointer automatically handles conversation history
@@ -217,6 +308,16 @@ def chat_query_with_custom_agent(user_query: str, session_id: str = "default") -
             config=thread_config  # This enables session persistence
         )
         logger.info("After: app.invoke with checkpointer")
+
+        # Save token usage if we tracked any tokens
+        if total_input_tokens > 0 or total_output_tokens > 0:
+            save_token_usage(
+                user_id=user_id or "anonymous",
+                thread_id=thread_id,
+                input_tokens=total_input_tokens,
+                output_tokens=total_output_tokens,
+                query_text=user_query
+            )
 
         # Get the final AI message
         final_message = result["messages"][-1]
@@ -276,7 +377,7 @@ def chat_query_with_custom_agent(user_query: str, session_id: str = "default") -
             )
         
         # No manual memory saving needed - checkpointer handles it automatically
-        logger.info(f"Conversation automatically saved to SQLite for session: {session_id}")
+        logger.info(f"Conversation automatically saved to SQLite for thread: {thread_id}")
         
         # Return structured response if we have source info
         if source_info:
@@ -297,40 +398,46 @@ def chat_query_with_custom_agent(user_query: str, session_id: str = "default") -
         )
 
 
-def chat_query(user_query: str, session_id: str = "default") -> str:
+def chat_query(user_query: str, thread_id: str = "default", user_id: str = None) -> str:
     """Main chat function - uses LangGraph agent with SQLite checkpointer."""
-    return chat_query_with_custom_agent(user_query, session_id)
+    return chat_query_with_custom_agent(user_query, thread_id, user_id)
 
 
-def clear_memory(session_id: str = "default"):
-    """Clear conversation history for a specific session."""
+def clear_memory(thread_id: str = "default", user_id: str = None):
+    """Clear conversation history for a specific thread."""
     try:
         # Use the same database connection that the checkpointer uses
         cursor = conn.cursor()
         
         # Clear all checkpoints for this specific thread_id
-        cursor.execute("DELETE FROM checkpoints WHERE thread_id = ?", (session_id,))
+        cursor.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
         conn.commit()
         
-        logger.info(f"Cleared conversation history for session: {session_id}")
-        return {"status": "success", "session_id": session_id}
+        logger.info(f"Cleared conversation history for thread: {thread_id}, user: {user_id}")
+        return {"status": "success", "thread_id": thread_id, "user_id": user_id}
         
     except Exception as e:
-        logger.error(f"Error clearing memory for session {session_id}: {e}")
+        logger.error(f"Error clearing memory for thread {thread_id}, user {user_id}: {e}")
         return {"status": "error", "message": str(e)}
 
 
-def get_memory_stats(session_id: str = "default"):
-    """Get statistics about conversation history for a session."""
+def get_memory_stats(thread_id: str = "default", user_id: str = None):
+    """Get statistics about conversation history for a thread."""
     try:
-        thread_config = {"configurable": {"thread_id": session_id}}
+        thread_config = {
+            "configurable": {
+                "thread_id": thread_id,
+                "user_id": user_id or "anonymous"
+            }
+        }
         
         # Get current state for this thread
         checkpoint_tuple = checkpointer.get_tuple(thread_config)
         if checkpoint_tuple and checkpoint_tuple.checkpoint:
             messages = checkpoint_tuple.checkpoint.get("channel_values", {}).get("messages", [])
             return {
-                "session_id": session_id,
+                "thread_id": thread_id,
+                "user_id": user_id,
                 "total_messages": len(messages),
                 "user_messages": len([m for m in messages if isinstance(m, HumanMessage)]),
                 "ai_messages": len([m for m in messages if isinstance(m, AIMessage)]),
@@ -339,16 +446,18 @@ def get_memory_stats(session_id: str = "default"):
             }
         else:
             return {
-                "session_id": session_id,
+                "thread_id": thread_id,
+                "user_id": user_id,
                 "total_messages": 0,
                 "storage": "SQLite",
                 "status": "empty"
             }
             
     except Exception as e:
-        logger.error(f"Error getting memory stats for session {session_id}: {e}")
+        logger.error(f"Error getting memory stats for thread {thread_id}, user {user_id}: {e}")
         return {
-            "session_id": session_id,
+            "thread_id": thread_id,
+            "user_id": user_id,
             "status": "error",
             "message": str(e)
         }

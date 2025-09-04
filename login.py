@@ -304,7 +304,9 @@ def logout():
         from chatbot import clear_memory
         user_info = get_current_user()
         if user_info:
-            clear_memory(user_info['username'])
+            thread_id = user_info['username']
+            user_id = st.session_state.get('user_id')
+            clear_memory(thread_id, user_id)
     except ImportError:
         # If chatbot module is not available, just continue with logout
         pass

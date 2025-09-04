@@ -25,6 +25,16 @@ def get_username():
     return user_info['username'] if user_info else "default"
 
 
+def get_thread_id():
+    """Get current thread ID (using username for now)."""
+    return get_username()
+
+
+def get_user_id():
+    """Get current user ID from session state."""
+    return st.session_state.get('user_id', None)
+
+
 def app():
     st.title("Campaign Performance Assistant")
     st.markdown(
@@ -74,7 +84,7 @@ def app():
         # Display assistant response
         with st.chat_message("assistant", avatar="✨"):
             with st.spinner("Thinking..."):
-                response = chat_query(prompt, get_username())
+                response = chat_query(prompt, get_thread_id(), get_user_id())
             if isinstance(response, dict) and response.get("type") == "chart":
                 st.markdown(response.get("message", ""))
                 data = response.get("data", {})
@@ -132,6 +142,6 @@ def app():
         
         with col1:
             if st.button("Clear Chat History", type="secondary"):
-                clear_memory(get_username())
+                clear_memory(get_thread_id(), get_user_id())
                 st.session_state.messages = []
                 st.rerun()

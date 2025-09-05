@@ -3,6 +3,7 @@ import login
 import requests
 import json
 from datetime import datetime
+from chatbot import token_tracker
 
 def delete_firebase_user(id_token: str) -> dict:
     """Delete user account from Firebase."""
@@ -63,27 +64,53 @@ def app():
             st.info(f"**Last Login:** {login_time}")
     
     st.markdown("---")
+
+    # Token Usage Statistics Section
+    st.markdown("### 📈 Usage Statistics")
     
-    # Session Information Section
-    st.markdown("### 📊 Session Information")
-    
-    # Calculate session duration
-    if user_info['login_time']:
-        session_duration = datetime.now() - user_info['login_time']
-        duration_str = str(session_duration).split('.')[0]  # Remove microseconds
+    user_id = st.session_state.get('user_id')
+    if user_id:
+        try:
+            user_stats = token_tracker.get_user_token_stats(user_id)
+            
+            if user_stats.get('total_queries', 0) > 0:
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric("Total Queries", user_stats['total_queries'])
+                
+                with col2:
+                    st.metric("Total Tokens", f"{user_stats['total_tokens']:,}")
+                
+                with col3:
+                    st.metric("Input Tokens", f"{user_stats.get('total_input_tokens', 0):,}")
+                
+                with col4:
+                    st.metric("Output Tokens", f"{user_stats.get('total_output_tokens', 0):,}")
+                
+                if user_stats.get('avg_tokens_per_query'):
+                    st.info(f"**Average Tokens per Query:** {user_stats['avg_tokens_per_query']:.1f}")
+                
+                # Show recent activity if available
+                try:
+                    recent_activity = token_tracker.get_user_recent_activity(user_id, limit=5)
+                    if recent_activity.get('recent_activities'):
+                        with st.expander("Recent Activity (Last 5 queries)"):
+                            for activity in recent_activity['recent_activities']:
+                                timestamp = activity['timestamp']
+                                tokens = activity['total_tokens']
+                                st.write(f"**{timestamp}:** {tokens} tokens")
+                except Exception:
+                    pass  # Skip recent activity if there's an error
+                    
+            else:
+                st.info("No usage data available yet. Start chatting to see your statistics!")
+                
+        except Exception as e:
+            st.warning(f"Could not load usage statistics: {str(e)}")
     else:
-        duration_str = "Unknown"
-    
-    session_info_data = {
-        "Session Duration": duration_str,
-        "Authentication Method": "Firebase",
-        "Session Status": "Active ✅" if login.check_authentication() else "❌ Expired",
-        "User ID": st.session_state.get('user_id', 'N/A')[:8] + "..." if st.session_state.get('user_id') else 'N/A'
-    }
-    
-    for key, value in session_info_data.items():
-        st.info(f"**{key}:** {value}")
-    
+        st.warning("User ID not available for statistics.")
+
     st.markdown("---")
     
     # Security Information
@@ -99,37 +126,8 @@ def app():
     for key, value in security_info.items():
         st.info(f"**{key}:** {value}")
     
-    # Security recommendations
-    st.markdown("##### 🛡️ Security Recommendations")
-    st.markdown("""
-    - Use a strong, unique password
-    - Don't share your login credentials
-    - Log out from public computers
-    - Contact admin if you notice suspicious activity
-    """)
-    
     st.markdown("---")
     
-    # Debug Information (only for admins)
-    if user_info['role'] == 'admin':
-        st.markdown("### 👨‍💼 Admin Information")
-        
-        with st.expander("Session State Details"):
-            # Filter out sensitive information
-            safe_session_state = {}
-            for key, value in st.session_state.items():
-                if key not in ['id_token', 'refresh_token', 'messages']:  # Don't show sensitive tokens
-                    if isinstance(value, datetime):
-                        safe_session_state[key] = value.strftime("%Y-%m-%d %H:%M:%S")
-                    else:
-                        safe_session_state[key] = str(value)
-            
-            st.json(safe_session_state)
-        
-        with st.expander("User Data from Login Module"):
-            st.json(user_info)
-        st.markdown("---")
-
     # Account Actions Section
     st.markdown("### ⚙️ Account Actions")
 

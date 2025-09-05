@@ -63,6 +63,33 @@ checkpointer = SqliteSaver(conn)
 token_tracker = TokenTracker(conn)
 
 
+def load_conversation_history(user_id: str, thread_id: str, limit: int = 20) -> list[BaseMessage]:
+    """Load conversation history from SQLite and convert to LangChain messages."""
+    try:
+        # Get chat history from database (only text messages for context)
+        history = token_tracker.get_chat_history(user_id, thread_id, limit * 2)  # Get more to account for filtering
+        
+        messages = []
+        text_message_count = 0
+        
+        for record in history:
+            # Only include text messages for conversation context
+            if record.get("response_type") == "text" and text_message_count < limit:
+                if record["role"] == "user":
+                    messages.append(HumanMessage(content=record["content"]))
+                    text_message_count += 1
+                elif record["role"] == "assistant":
+                    messages.append(AIMessage(content=record["content"]))
+                    text_message_count += 1
+        
+        logger.info(f"Loaded {len(messages)} text messages from chat history for thread {thread_id}")
+        return messages
+        
+    except Exception as e:
+        logger.error(f"Error loading conversation history: {e}")
+        return []
+
+
 def message_reducer(existing: Sequence[BaseMessage], new: Sequence[BaseMessage]) -> Sequence[BaseMessage]:
     """Keep only the last n messages to prevent unlimited growth."""
 
@@ -108,11 +135,15 @@ def chat_query_with_custom_agent(user_query: str, thread_id: str = "default", us
         # Define the agent node with token tracking
         def call_model(state):
             nonlocal total_input_tokens, total_output_tokens
-            #logger.info(f"call_model() - User: {user_id}, Thread: {thread_id}")
             messages = state["messages"]
-            #logger.info(f"\n\n messages: {messages}")
+            logger.info(f"\n\n messages:\n {messages}")
+
             data = state.get("data", {})
-            logger.info(f"\n\n data: {data}")
+            
+            # Log conversation context for debugging
+            logger.info(f"call_model() - Processing {len(messages)} messages for User: {user_id}, Thread: {thread_id}")
+            logger.info(f"Message types: {[type(msg).__name__ for msg in messages]}")
+            logger.info(f"Data: {data}")
             
             response = llm_with_tools.invoke(messages)
             
@@ -224,24 +255,57 @@ def chat_query_with_custom_agent(user_query: str, thread_id: str = "default", us
         
         logger.info(f"Thread config: {thread_config}")
         
-        # Prepare initial messages (only system message and current query)
-        # Checkpointer automatically handles conversation history
+        # Load conversation history from SQLite and build initial messages
+        conversation_history = load_conversation_history(user_id or "anonymous", thread_id, limit=10)
+        
+        # Debug: Log what conversation history we loaded
+        if conversation_history:
+            logger.info(f"Loaded conversation history:")
+            for i, msg in enumerate(conversation_history):
+                logger.info(f"  {i+1}. {type(msg).__name__}: {msg.content[:100]}...")
+        else:
+            logger.info("No conversation history found")
+        
+        # Build initial messages with improved system prompt that prioritizes conversation history
         initial_messages = [
             SystemMessage(content=(
-                "You are a Campaign Performance Assistant that responds polite and professional to queries about campaign data. "
-                "Use the available tools to get accurate information, do not make up answers. "
-                "If no relevant campaign data is found, respond with: I don't have any information on that."
-            )),
-            HumanMessage(content=user_query)
+                "You are a Campaign Performance Assistant. You have access to our conversation history and campaign data tools. "
+                "IMPORTANT: Before using any tools, carefully review our previous conversation to see if you already have the information needed. "
+                "If the user is asking about something we discussed before, refer to that information and provide a response based on our chat history. "
+                "Examples of when to use conversation history: "
+                "- 'What was that campaign we discussed?' - Check our previous messages "
+                "- 'Can you show me those results again?' - Look for previous data in our chat "
+                "- 'What did you say about campaign performance?' - Reference previous responses "
+                "Only use the campaign data tools when: "
+                "- You need fresh/updated data "
+                "- The question asks for information not previously discussed "
+                "- You need to perform new analysis or generate new charts/tables "
+                "Always be polite and professional. If you cannot find information in our history or through tools, respond with: I don't have any information on that."
+            ))
         ]
         
-        # Run the agent with checkpointer
-        logger.info("Before: app.invoke with checkpointer")
+        # Add conversation history (only text messages)
+        initial_messages.extend(conversation_history)
+        
+        # Add current user query
+        initial_messages.append(HumanMessage(content=user_query))
+        
+        logger.info(f"Initial messages count: {len(initial_messages)} (including {len(conversation_history)} from history)")
+        
+        # Debug: Log the complete message structure
+        logger.info("Complete message structure being sent to agent:")
+        for i, msg in enumerate(initial_messages):
+            msg_type = type(msg).__name__
+            content_preview = msg.content[:150] + "..." if len(msg.content) > 150 else msg.content
+            logger.info(f"  {i+1}. {msg_type}: {content_preview}")
+        
+        # Run the agent with populated conversation history
+        logger.info("Before: app.invoke with populated history")
         result = app.invoke(
             {"messages": initial_messages, "data": {}}, 
             config=thread_config  # This enables session persistence
         )
-        logger.info("After: app.invoke with checkpointer")
+        logger.info("After: app.invoke with populated history")
 
         # Save token usage if we tracked any tokens
         if total_input_tokens > 0 or total_output_tokens > 0:
@@ -257,13 +321,13 @@ def chat_query_with_custom_agent(user_query: str, thread_id: str = "default", us
         final_message_content = final_message.content
         logger.info(f"Final message content: {final_message_content}")
 
+        # If agent explicitly says it doesn't have information, return that
         if "I don't have any information on that." in final_message_content:
             final_answer = {
                 "type": "text",
                 "message": final_message_content
             }
             logger.info(f"\n \n final_answer: {final_answer}")
-
             return final_answer
 
         data = result["data"]
@@ -292,32 +356,41 @@ def chat_query_with_custom_agent(user_query: str, thread_id: str = "default", us
             logger.info(f"\n \n final_answer: {final_answer}")
             return final_answer
 
-
-        # Check if we got meaningful data by examining tool messages
+        # Check if tools were used and if they provided meaningful data
         tool_messages = [msg for msg in result["messages"] if isinstance(msg, ToolMessage)]
-        meaningful_data = False
-        source_info = None
         
-        for tool_msg in tool_messages:
-            try:
-                tool_content_dict = ast.literal_eval(tool_msg.content)
-                if "No relevant campaign documents found" not in tool_msg.content:
-                    if "not found" not in tool_msg.content.lower() and "error" not in tool_msg.content.lower():
-                        meaningful_data = True
-                        source_info = tool_content_dict.get('source')
-                        break
-            except (ValueError, SyntaxError):
-                # If content isn't a valid Python literal, check as string
-                if "No relevant campaign documents found" not in tool_msg.content:
-                    if "not found" not in tool_msg.content.lower() and "error" not in tool_msg.content.lower():
-                        meaningful_data = True
-                        break
-        
-        if not meaningful_data:
-            final_message_content = (
-                "I couldn't find relevant campaign information for your question. "
-                "Please try rephrasing or ask about a specific campaign, metric, topic or segment!"
-            )
+        if tool_messages:
+            # Tools were used - check if they provided meaningful data
+            meaningful_data = False
+            source_info = None
+            
+            for tool_msg in tool_messages:
+                try:
+                    tool_content_dict = ast.literal_eval(tool_msg.content)
+                    if "No relevant campaign documents found" not in tool_msg.content:
+                        if "not found" not in tool_msg.content.lower() and "error" not in tool_msg.content.lower():
+                            meaningful_data = True
+                            source_info = tool_content_dict.get('source')
+                            break
+                except (ValueError, SyntaxError):
+                    # If content isn't a valid Python literal, check as string
+                    if "No relevant campaign documents found" not in tool_msg.content:
+                        if "not found" not in tool_msg.content.lower() and "error" not in tool_msg.content.lower():
+                            meaningful_data = True
+                            break
+            
+            # If tools were used but didn't find meaningful data, update the message
+            if not meaningful_data:
+                final_message_content = (
+                    "I couldn't find relevant campaign information for your question. "
+                    "Please try rephrasing or ask about a specific campaign, metric, topic or segment!"
+                )
+                source_info = None
+        else:
+            # No tools were used - agent answered from conversation history or knowledge
+            # Keep the agent's response as-is
+            logger.info("No tools used - agent responded from conversation history or knowledge")
+            source_info = None
         
         final_answer = {
             "type": "text",

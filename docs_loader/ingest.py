@@ -1,4 +1,5 @@
 import time
+import re
 
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -38,7 +39,7 @@ logger.add(
 
 # Initialize text splitter for chunking
 text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1000,  # Characters per chunk
+    chunk_size=2000,  # Characters per chunk
     chunk_overlap=200,  # Overlap between chunks
     length_function=len,
     separators=["\n\n", "\n", " ", ""]
@@ -127,7 +128,15 @@ class DocumentHandler(FileSystemEventHandler):
             
             # Split documents into chunks
             text_chunks = text_splitter.split_documents(docs)
-            
+
+            # Add campaign_id metadata to each chunk
+            match = re.search(r'campaign_(\d+)_', filename)
+            campaign_id = match.group(1) if match else None
+            logger.success(f"campaign_id: {campaign_id}")
+            if campaign_id:
+                for chunk in text_chunks:
+                    chunk.metadata["campaign_id"] = campaign_id
+                        
             embeddings = HuggingFaceEmbeddings(
                 model_name="sentence-transformers/all-MiniLM-L6-v2"
             )

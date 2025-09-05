@@ -5,19 +5,40 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 import requests
 from chart_utils import get_available_charts
+import re
+import os
+from dotenv import load_dotenv
 
-# Load the persisted Chroma DB and retriever for RAG
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
-)
-db = Chroma(persist_directory="chroma_db", embedding_function=embeddings)
-retriever = db.as_retriever(search_kwargs={"k": 4})
+# Load environment variables
+load_dotenv()
 
-# FastAPI base URL
-API_BASE_URL = "http://localhost:8000"
+# FastAPI configuration from environment
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+API_KEY = os.getenv("API_KEY", "sk-test-1234567890abcdef")
 
-# API Key for authentication
-API_KEY = "sk-test-1234567890abcdef"
+def make_api_request(endpoint: str, method: str = "GET") -> dict:
+    """Helper function to make API requests with consistent error handling."""
+    try:
+        headers = {"Authorization": f"Bearer {API_KEY}"}
+        url = f"{API_BASE_URL}{endpoint}"
+        
+        if method == "GET":
+            response = requests.get(url, headers=headers)
+        else:
+            raise ValueError(f"Unsupported HTTP method: {method}")
+            
+        if response.status_code == 200:
+            return {"success": True, "data": response.json()}
+        else:
+            error_detail = response.json().get('detail', 'Unknown error') if response.content else 'API error'
+            return {"success": False, "error": error_detail, "status_code": response.status_code}
+            
+    except requests.RequestException as e:
+        logger.error(f"API request failed: {e}")
+        return {"success": False, "error": f"Network error: {e}"}
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        return {"success": False, "error": f"Unexpected error: {e}"}
 
 
 @tool
@@ -28,10 +49,25 @@ def search_campaign_documents(query: str) -> dict:
     Examples: "executive summary for campaign 101", "performance insights", 
     "recommendations for campaign 102", "what does the report say about..."
     """
+    logger.info(f"search_campaign_documents")
     logger.info(f"Searching documents for: {query}")
     
+    # Get campaign_id from query if present
+    match = re.search(r'campaign\s+(\d+)', query, re.IGNORECASE)
+    campaign_id = match.group(1) if match else None
+    logger.info(f"campaign_id: {campaign_id}")
+
+    search_kwargs = {"k": 4}
+    if campaign_id:
+        search_kwargs["filter"] = {"campaign_id": f"{campaign_id}"}
+        print("search_kwargs:", search_kwargs)
+        
     # Use similarity search with scores to filter relevant documents
-    docs_and_scores = db.similarity_search_with_score(query, k=4)
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
+    db = Chroma(persist_directory="chroma_db", embedding_function=embeddings)
+    docs_and_scores = db.similarity_search_with_score(query, **search_kwargs)
     
     # Filter documents with similarity score above threshold
     relevant_docs = []
@@ -74,6 +110,7 @@ def search_campaign_documents(query: str) -> dict:
     # Create source information
     unique_sources = list(set(sources))
     source_info = f"Vector Database ({', '.join(unique_sources)})"
+    logger.info(f"source_info: {source_info}")
     
     return {
         "type": "text",
@@ -92,17 +129,13 @@ def get_campaign_by_id(campaign_id: int) -> dict:
     """
     logger.info(f"Getting campaign details for ID: {campaign_id}")
     
-    try:
-        headers = {"Authorization": f"Bearer {API_KEY}"}
-        response = requests.get(
-            f"{API_BASE_URL}/campaigns/{campaign_id}", 
-            headers=headers
-        )
-        if response.status_code == 200:
-            campaign = response.json()
-            return {
-                "type": "text",
-                "message": f"""
+    result = make_api_request(f"/campaigns/{campaign_id}")
+    
+    if result["success"]:
+        campaign = result["data"]
+        return {
+            "type": "text",
+            "message": f"""
 Campaign {campaign_id} Details:
 - Topic: {campaign['campaign_topic']}
 - Date: {campaign['campaign_date']}
@@ -115,20 +148,13 @@ Campaign {campaign_id} Details:
 - Open Rate: {campaign['open_rate']}%
 - Click Rate: {campaign['click_rate']}%
 - Conversion Rate: {campaign['conversion_rate']}%
-                """.strip(),
-                "source": "Campaign Database (campaigns table)"
-            }
-        else:
-            return {
-                "type": "text",
-                "message": f"Campaign {campaign_id} not found.",
-                "source": "Campaign Database (campaigns table)"
-            }
-    except Exception as e:
-        logger.error(f"API error: {e}")
+            """.strip(),
+            "source": "Campaign Database (campaigns table)"
+        }
+    else:
         return {
             "type": "text",
-            "message": f"Error retrieving campaign {campaign_id}: {e}",
+            "message": f"Campaign {campaign_id} not found: {result['error']}",
             "source": "Campaign Database (API error)"
         }
 
@@ -146,43 +172,33 @@ def get_top_campaigns_by_metric(metric: str = '', limit: int = 5) -> dict:
     if not metric:
         metric = 'opens'
     logger.info(f"Getting top {limit} campaigns by {metric}")
-    try:
-        headers = {"Authorization": f"Bearer {API_KEY}"}
-        response = requests.get(
-            f"{API_BASE_URL}/campaigns/top/{metric}?limit={limit}",
-            headers=headers
-        )
-        if response.status_code == 200:
-            data = response.json()
-            result = {
-                "type": "table",
-                "columns": ["campaign_id", "campaign_topic", "customer_segment", 
-                           "conversion_rate"],
-                "rows": [
-                    {
-                        "campaign_id": c["campaign_id"],
-                        "campaign_topic": c["campaign_topic"],
-                        "customer_segment": c["customer_segment"],
-                        "conversion_rate": c["conversion_rate"],
-                    }
-                    for c in data["campaigns"]
-                ],
-                "message": f"Top {data['limit']} campaigns by {data['metric']}:",
-                "source": "Campaign Database (campaigns table)"
-            }
-            logger.info(f"Returning table dict: {result}")
-            return result
-        else:
-            return {
-                "type": "error",
-                "message": f"Error: {response.json()['detail']}",
-                "source": "Campaign Database (API error)"
-            }
-    except Exception as e:
-        logger.error(f"API error: {e}")
+    
+    result = make_api_request(f"/campaigns/top/{metric}?limit={limit}")
+    
+    if result["success"]:
+        data = result["data"]
+        table_result = {
+            "type": "table",
+            "columns": ["campaign_id", "campaign_topic", "customer_segment", 
+                       "conversion_rate"],
+            "rows": [
+                {
+                    "campaign_id": c["campaign_id"],
+                    "campaign_topic": c["campaign_topic"],
+                    "customer_segment": c["customer_segment"],
+                    "conversion_rate": c["conversion_rate"],
+                }
+                for c in data["campaigns"]
+            ],
+            "message": f"Top {data['limit']} campaigns by {data['metric']}:",
+            "source": "Campaign Database (campaigns table)"
+        }
+        logger.info(f"Returning table dict: {table_result}")
+        return table_result
+    else:
         return {
             "type": "error",
-            "message": f"Error retrieving top campaigns: {e}",
+            "message": f"Error: {result['error']}",
             "source": "Campaign Database (API error)"
         }
 
@@ -196,37 +212,25 @@ def get_campaigns_by_topic(topic: str) -> dict:
     """
     logger.info(f"Getting campaigns for topic: {topic}")
     
-    try:
-        headers = {"Authorization": f"Bearer {API_KEY}"}
-        response = requests.get(
-            f"{API_BASE_URL}/campaigns/topic/{topic}", 
-            headers=headers
-        )
-        if response.status_code == 200:
-            data = response.json()
-            result = f"Campaigns for topic '{topic}' ({data['count']} found):\n\n"
-            for campaign in data['campaigns']:
-                result += f"Campaign {campaign['campaign_id']}:\n"
-                result += f"  Segment: {campaign['customer_segment']}\n"
-                result += f"  Conversion Rate: {campaign['conversion_rate']}%\n"
-                result += f"  Opens: {campaign['opens']:,}, Clicks: "
-                result += f"{campaign['clicks']:,}, Conversions: {campaign['conversions']:,}\n\n"
-            return {
-                "type": "text",
-                "message": result.strip(),
-                "source": "Campaign Database (campaigns table)"
-            }
-        else:
-            return {
-                "type": "text",
-                "message": f"Error: {response.json()['detail']}",
-                "source": "Campaign Database (API error)"
-            }
-    except Exception as e:
-        logger.error(f"API error: {e}")
+    result = make_api_request(f"/campaigns/topic/{topic}")
+    
+    if result["success"]:
+        data = result["data"]
+        message = f"Campaigns for topic '{topic}' ({data['count']} found):\n\n"
+        for campaign in data['campaigns']:
+            message += f"Campaign {campaign['campaign_id']}:\n"
+            message += f"  Segment: {campaign['customer_segment']}\n"
+            message += f"  Conversion Rate: {campaign['conversion_rate']}%\n"
+            message += f"  Opens: {campaign['opens']:,}, Clicks: {campaign['clicks']:,}, Conversions: {campaign['conversions']:,}\n\n"
         return {
             "type": "text",
-            "message": f"Error retrieving campaigns: {e}",
+            "message": message.strip(),
+            "source": "Campaign Database (campaigns table)"
+        }
+    else:
+        return {
+            "type": "text",
+            "message": f"Error retrieving campaigns for topic '{topic}': {result['error']}",
             "source": "Campaign Database (API error)"
         }
 
@@ -240,39 +244,25 @@ def get_campaigns_by_segment(segment: str) -> dict:
     """
     logger.info(f"Getting campaigns for segment: {segment}")
     
-    try:
-        headers = {"Authorization": f"Bearer {API_KEY}"}
-        response = requests.get(
-            f"{API_BASE_URL}/campaigns/segment/{segment}", 
-            headers=headers
-        )
-        if response.status_code == 200:
-            data = response.json()
-            result = f"Campaigns for segment '{segment}' ({data['count']} found):\n\n"
-            for campaign in data['campaigns']:
-                result += f"Campaign {campaign['campaign_id']} "
-                result += f"({campaign['campaign_date']}):\n"
-                result += f"  Topic: {campaign['campaign_topic']}\n"
-                result += f"  Conversion Rate: {campaign['conversion_rate']}%\n"
-                result += f"  Opens: {campaign['opens']:,}, Clicks: "
-                result += f"{campaign['clicks']:,}, Conversions: "
-                result += f"{campaign['conversions']:,}\n\n"
-            return {
-                "type": "text",
-                "message": result.strip(),
-                "source": "Campaign Database (campaigns table)"
-            }
-        else:
-            return {
-                "type": "text",
-                "message": f"Error: {response.json()['detail']}",
-                "source": "Campaign Database (API error)"
-            }
-    except Exception as e:
-        logger.error(f"API error: {e}")
+    result = make_api_request(f"/campaigns/segment/{segment}")
+    
+    if result["success"]:
+        data = result["data"]
+        message = f"Campaigns for segment '{segment}' ({data['count']} found):\n\n"
+        for campaign in data['campaigns']:
+            message += f"Campaign {campaign['campaign_id']} ({campaign['campaign_date']}):\n"
+            message += f"  Topic: {campaign['campaign_topic']}\n"
+            message += f"  Conversion Rate: {campaign['conversion_rate']}%\n"
+            message += f"  Opens: {campaign['opens']:,}, Clicks: {campaign['clicks']:,}, Conversions: {campaign['conversions']:,}\n\n"
         return {
             "type": "text",
-            "message": f"Error retrieving campaigns: {e}",
+            "message": message.strip(),
+            "source": "Campaign Database (campaigns table)"
+        }
+    else:
+        return {
+            "type": "text",
+            "message": f"Error retrieving campaigns for segment '{segment}': {result['error']}",
             "source": "Campaign Database (API error)"
         }
 
@@ -286,17 +276,13 @@ def get_campaign_summary_stats() -> dict:
     """
     logger.info("Getting campaign summary statistics")
     
-    try:
-        headers = {"Authorization": f"Bearer {API_KEY}"}
-        response = requests.get(
-            f"{API_BASE_URL}/campaigns/summary", 
-            headers=headers
-        )
-        if response.status_code == 200:
-            stats = response.json()
-            return {
-                "type": "text",
-                "message": f"""
+    result = make_api_request("/campaigns/summary")
+    
+    if result["success"]:
+        stats = result["data"]
+        return {
+            "type": "text",
+            "message": f"""
 Campaign Summary Statistics:
 - Total Campaigns: {stats['total_campaigns']:,}
 - Average Conversion Rate: {stats['average_conversion_rate']}%
@@ -305,20 +291,13 @@ Campaign Summary Statistics:
 - Total Conversions: {stats['total_conversions']:,}
 - Total Opens: {stats['total_opens']:,}
 - Total Clicks: {stats['total_clicks']:,}
-                """.strip(),
-                "source": "Campaign Database (campaigns table)"
-            }
-        else:
-            return {
-                "type": "text",
-                "message": f"Error: {response.json()['detail']}",
-                "source": "Campaign Database (API error)"
-            }
-    except Exception as e:
-        logger.error(f"API error: {e}")
+            """.strip(),
+            "source": "Campaign Database (campaigns table)"
+        }
+    else:
         return {
             "type": "text",
-            "message": f"Error retrieving summary stats: {e}",
+            "message": f"Error retrieving summary statistics: {result['error']}",
             "source": "Campaign Database (API error)"
         }
 
@@ -332,19 +311,15 @@ def compare_campaigns_by_id(campaign_id1: int, campaign_id2: int) -> dict:
     """
     logger.info(f"Comparing campaigns {campaign_id1} and {campaign_id2}")
     
-    try:
-        headers = {"Authorization": f"Bearer {API_KEY}"}
-        response = requests.get(
-            f"{API_BASE_URL}/campaigns/compare/{campaign_id1}/{campaign_id2}", 
-            headers=headers
-        )
-        if response.status_code == 200:
-            data = response.json()
-            c1, c2 = data['campaign_1'], data['campaign_2']
-            
-            return {
-                "type": "text",
-                "message": f"""
+    result = make_api_request(f"/campaigns/compare/{campaign_id1}/{campaign_id2}")
+    
+    if result["success"]:
+        data = result["data"]
+        c1, c2 = data['campaign_1'], data['campaign_2']
+        
+        return {
+            "type": "text",
+            "message": f"""
 Campaign Comparison:
 {campaign_id1} vs {campaign_id2}
 
@@ -353,8 +328,7 @@ Campaign {c1['campaign_id']} ({c1['campaign_topic']}):
   Conversion Rate: {c1['conversion_rate']}%
   Open Rate: {c1['open_rate']}%
   Click Rate: {c1['click_rate']}%
-  Opens: {c1['opens']:,}, Clicks: {c1['clicks']:,}, "
-  "Conversions: {c1['conversions']:,}
+  Opens: {c1['opens']:,}, Clicks: {c1['clicks']:,}, Conversions: {c1['conversions']:,}
   Audience: {c1['audience_size']:,}
 
 Campaign {c2['campaign_id']} ({c2['campaign_topic']}):
@@ -362,23 +336,15 @@ Campaign {c2['campaign_id']} ({c2['campaign_topic']}):
   Conversion Rate: {c2['conversion_rate']}%
   Open Rate: {c2['open_rate']}%
   Click Rate: {c2['click_rate']}%
-  Opens: {c2['opens']:,}, Clicks: {c2['clicks']:,}, "
-  "Conversions: {c2['conversions']:,}
+  Opens: {c2['opens']:,}, Clicks: {c2['clicks']:,}, Conversions: {c2['conversions']:,}
   Audience: {c2['audience_size']:,}
-                """.strip(),
-                "source": "Campaign Database (campaigns table)"
-            }
-        else:
-            return {
-                "type": "text",
-                "message": f"Error: {response.json()['detail']}",
-                "source": "Campaign Database (API error)"
-            }
-    except Exception as e:
-        logger.error(f"API error: {e}")
+            """.strip(),
+            "source": "Campaign Database (campaigns table)"
+        }
+    else:
         return {
             "type": "text",
-            "message": f"Error comparing campaigns: {e}",
+            "message": f"Error comparing campaigns: {result['error']}",
             "source": "Campaign Database (API error)"
         }
 
